@@ -531,6 +531,16 @@ const micBtn = document.getElementById("micBtn");
 
 micBtn.onclick = () => {
 
+  // 🛡️ Museumsschutz: Klicks nur in definierten Zuständen
+  if (STATE !== "idle" && STATE !== "greet") {
+    return;
+  }
+
+  // 🛡️ Zusätzlicher Schutz bei laufender Aktion
+  if (talking || recRunning) {
+    return;
+  }
+
   // 🔒 Button-Guard gegen Doppelklicks
   if (buttonLocked) return;
   buttonLocked = true;
