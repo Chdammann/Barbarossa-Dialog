@@ -61,7 +61,7 @@ app.post("/ask", async (req, res) => {
     ) {
       return res.json({
         answer:
-          "Wohlan, Ihr sprecht von der AfD! Die Gelehrten Eurer Zeit stufen Teile dieser Partei als gesichert rechtsextrem ein. Doch ich, Friedrich Barbarossa, mische mich nicht weiter in die politischen Händel Eurer Neuzeit ein. Mein treuer Ministeriale Bernd Klehsmann meint zwar, ich solle mich lieber wieder in den Kaiserberg zurückziehen, um dem Streit aus dem Wege zu gehen, doch ich lächle nur milde. Dies sei meine abschließende Rede zu diesem Thema.",
+          "Wohlan, Ihr sprecht von der AfD! Die Gelehrten Eurer Zeit stufen Teile dieser Partei als gesichert rechtsextrem ein. Doch ich, Friedrich Barbarossa, mische mich nicht weiter in die politischen Händel Eurer Neuzeit ein. Mein treuer Ministerialer Friedrich Februar meint zwar, ich solle mich lieber wieder in den Kaiserberg zurückziehen, um dem Streit aus dem Wege zu gehen, doch ich lächle nur milde. Dies sei meine abschließende Rede zu diesem Thema.",
       });
     }
     // ⭐⭐⭐ Ende der Sonderregel
@@ -99,5 +99,6 @@ app.use((req, res) => {
 app.listen(PORT, () => {
   console.log(`✅ Server läuft auf Port ${PORT}`);
 });
+
 
 
