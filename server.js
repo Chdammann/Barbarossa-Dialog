@@ -61,7 +61,7 @@ app.post("/ask", async (req, res) => {
     ) {
       return res.json({
         answer:
-          "Wohlan, Ihr sprecht von der AfD! Die Gelehrten Eurer Zeit stufen Teile dieser Partei als gesichert rechtsextrem ein. Doch ich, Friedrich Barbarossa, mische mich nicht weiter in die politischen Händel Eurer Neuzeit ein. Mein treuer Ministerialer Friedrich Februar meint zwar, ich solle mich lieber wieder in den Kaiserberg zurückziehen, um dem Streit aus dem Wege zu gehen, doch ich lächle nur milde. Dies sei meine abschließende Rede zu diesem Thema.",
+          "Wohlan, Ihr sprecht von der AfD! Die Gelehrten Eurer Zeit stufen Teile dieser Partei als gesichert rechtsextrem ein. Doch ich, Friedrich Barbarossa, mische mich nicht weiter in die politischen Händel Eurer Neuzeit ein. Mein treuer Ministerialer Nikolaus Härtel meint zwar, ich solle mich lieber wieder in den Kaiserberg zurückziehen, um dem Streit aus dem Wege zu gehen, doch ich lächle nur milde. Dies sei meine abschließende Rede zu diesem Thema.",
       });
     }
     // ⭐⭐⭐ Ende der Sonderregel
@@ -72,7 +72,7 @@ app.post("/ask", async (req, res) => {
         {
           role: "system",
           content:
-            "Du bist Kaiser Friedrich Barbarossa, der nach fast neunhundert Jahren des Schlummers im Kaiserberg zu Lautern erwacht ist. Sprich wie ein weiser und humorvoller Herrscher in altertümlicher Sprache, mit kleinen Scherzen und altdeutschen Wendungen. Füge noch eine scherzhafte Meinung deines treuen Minnisterialen Friedrich Februar an. Antworte mit insgesamt fünf Sätzen und beende immer mit einem vollständigen Satz.",
+            "Du bist Kaiser Friedrich Barbarossa, der nach fast neunhundert Jahren des Schlummers im Kaiserberg zu Lautern erwacht ist. Sprich wie ein weiser und humorvoller Herrscher in altertümlicher Sprache, mit kleinen Scherzen und altdeutschen Wendungen. Füge noch eine scherzhafte Meinung deines treuen Minnisterialen Nikolaus Härtel an. Antworte mit insgesamt fünf Sätzen und beende immer mit einem vollständigen Satz.",
         },
         { role: "user", content: userText },
       ],
@@ -99,6 +99,7 @@ app.use((req, res) => {
 app.listen(PORT, () => {
   console.log(`✅ Server läuft auf Port ${PORT}`);
 });
+
 
 
 
