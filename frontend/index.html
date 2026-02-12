@@ -524,24 +524,20 @@ function initRecognition() {
 
 
 /* -----------------------------
-   BUTTON – GREET & LISTEN (FINAL)
+   BUTTON + ENTER – GREET & LISTEN (FINAL)
 ----------------------------- */
 
 const micBtn = document.getElementById("micBtn");
 
-micBtn.onclick = () => {
+function startInteraction() {
 
-  // 🛡️ Museumsschutz: Klicks nur in definierten Zuständen
-  if (STATE !== "idle" && STATE !== "greet") {
-    return;
-  }
+  // 🛡️ Museumsschutz: nur in definierten Zuständen
+  if (STATE !== "idle" && STATE !== "greet") return;
 
   // 🛡️ Zusätzlicher Schutz bei laufender Aktion
-  if (talking || recRunning) {
-    return;
-  }
+  if (talking || recRunning) return;
 
-  // 🔒 Button-Guard gegen Doppelklicks
+  // 🔒 Button-Guard gegen Doppelklicks / Tasterprellen
   if (buttonLocked) return;
   buttonLocked = true;
   setTimeout(() => buttonLocked = false, 400);
@@ -600,27 +596,33 @@ micBtn.onclick = () => {
 
   /* ===============================
      3️⃣ LISTEN
-     (kein explizites Stop mehr nötig)
+     (Klicks werden ignoriert)
   =============================== */
-  if (STATE === "listen") {
-    // Klick während Aufnahme wird ignoriert
-    return;
-  }
-
-  /* ===============================
-     ALLES ANDERE → IGNORIEREN
-  =============================== */
-};
+  if (STATE === "listen") return;
+}
 
 /* ===============================
-   RECOGNITION START
+   EVENTS
+================================ */
+
+// 🖱️ Button
+micBtn.onclick = startInteraction;
+
+// ⌨️ Enter-Taste / externer Taster
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    startInteraction();
+  }
+});
+
+/* ===============================
+   RECOGNITION START (Dummy)
 ================================ */
 
 function startRecognition() {
-  // absichtlich leer
+  // absichtlich leer (Kompatibilität)
 }
-
-
 /* ===============================
    🏛️ MUSEUMS-RESET (PASSIV & SICHER)
 ================================ */
