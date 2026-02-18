@@ -251,7 +251,7 @@ const renderer = new THREE.WebGLRenderer({
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setClearColor(0x000000);
-
+showHint("Weck mich auf");
 /* -----------------------------
    LICHT
 ----------------------------- */
@@ -567,6 +567,7 @@ function startInteraction() {
       "Seid gegrüßt, mein Freund. Ich bin Friedrich Barbarossa, nach fast neunhundert Jahren im Kaiserberg zu Lautern erwacht. Was ist Euer Begehr?",
       false
     );
+    showHint("Um eine Frage zu stellen, Knopf drücken");
 
     // 🕰️ Auto-Reset: wenn 2 Minuten keine Frage kommt → zurück in Startzustand
     if (greetTimeout) clearTimeout(greetTimeout);
@@ -610,7 +611,7 @@ function startInteraction() {
     lastTranscript = "";
     listeningFinished = false;
     STATE = "listen";
-
+    hideHint();
     try {
       recognition.start();
       recRunning = true;
@@ -694,7 +695,7 @@ function museumReset(reason = "") {
     model.rotation.x = baseRotX;
     model.rotation.y = baseRotY - Math.PI / 2;
   }
-
+  showHint("Weck mich auf");
   console.log("🟢 Museum-Reset abgeschlossen");
 }
 
