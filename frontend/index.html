@@ -284,7 +284,8 @@ const renderer = new THREE.WebGLRenderer({
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setClearColor(0x000000);
-showHint("Weck mich auf");
+document.getElementById("hintText").innerText = "Weck mich auf";
+
 /* -----------------------------
    LICHT
 ----------------------------- */
@@ -601,9 +602,7 @@ function startInteraction() {
       false
     );
 
-    showHint("Um eine Frage zu stellen, Knopf drücken");
-
-    // 🕰️ Auto-Reset: wenn 2 Minuten keine Frage kommt → zurück in Startzustand
+       // 🕰️ Auto-Reset: wenn 2 Minuten keine Frage kommt → zurück in Startzustand
     if (greetTimeout) clearTimeout(greetTimeout);
     greetTimeout = setTimeout(() => {
       if (STATE === "greet" && !recRunning && !talking) {
@@ -699,16 +698,6 @@ function hideHint() {
   const hintElement = document.getElementById("hint");
   if (hintElement) {
     hintElement.textContent = "";
-  }
-}
-
-// ===============================
-// HINT-FUNKTION
-// ===============================
-function showHint(text) {
-  const hintElement = document.getElementById("hint");
-  if (hintElement) {
-    hintElement.textContent = text;
   }
 }
 
@@ -932,7 +921,7 @@ function speak(text, slow = false) {
     }
   };
 
-  /* -----------------------------
+   /* -----------------------------
      ENDE – ABSOLUTER SCHLUSS
      + MOUTH-COOLDOWN GEGEN NACHKLAPPERN
   ----------------------------- */
@@ -951,6 +940,14 @@ function speak(text, slow = false) {
       mouthCooldown = false;
     }, 120);
 
+    // 👉 NACH BEGRÜSSUNG: Hinweis für Frage einblenden
+    if (STATE === "greet") {
+      const hintTextQuestion = document.getElementById("hintTextQuestion");
+      if (hintTextQuestion) {
+        hintTextQuestion.innerText = "Um Frage zu stellen, Knopf drücken";
+      }
+    }
+
     if (STATE === "answer") {
       resetMovements();
       greeted = false;
@@ -962,11 +959,12 @@ function speak(text, slow = false) {
       const hintText = document.getElementById("hintText");
       const hintTextQuestion = document.getElementById("hintTextQuestion");
       if (hintText) hintText.innerText = "Weck mich auf";
-      if (hintTextQuestion) hintTextQuestion.innerText = "Um Frage zu stellen, Knopf drücken";
+      if (hintTextQuestion) hintTextQuestion.innerText = "";
     }
   };
 
   // Start der Sprachausgabe
+
   speechSynthesis.speak(u);
 }
 
