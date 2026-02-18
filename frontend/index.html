@@ -948,6 +948,7 @@ function speak(text, slow = false) {
       }
     }
 
+    // 👉 NACH BEANTWORTUNG: Reset auf Idle & Hinweistexte zurücksetzen
     if (STATE === "answer") {
       resetMovements();
       greeted = false;
@@ -955,7 +956,6 @@ function speak(text, slow = false) {
       rising = false;
       STATE = "idle";
 
-      // Hinweistexte nach Reset wiederherstellen
       const hintText = document.getElementById("hintText");
       const hintTextQuestion = document.getElementById("hintTextQuestion");
       if (hintText) hintText.innerText = "Weck mich auf";
@@ -964,9 +964,9 @@ function speak(text, slow = false) {
   };
 
   // Start der Sprachausgabe
-
   speechSynthesis.speak(u);
 }
+
 
 /* -----------------------------
    RESIZE
