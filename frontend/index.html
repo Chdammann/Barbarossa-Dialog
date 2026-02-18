@@ -54,6 +54,20 @@
   }
 
   /* -----------------------------
+     HINT TEXT (zentriert, gold)
+  ----------------------------- */
+  #hint {
+    position: absolute;
+    top: 70px;           /* unterhalb der Überschrift */
+    width: 100%;
+    text-align: center;
+    color: #e0b36b;      /* gleiche Farbe wie Überschrift */
+    font-size: 18px;
+    z-index: 1000;
+    pointer-events: none; /* Klicks passieren durch */
+  }
+
+  /* -----------------------------
      MIKROFONBUTTON
   ----------------------------- */
   #micBtn {
@@ -99,8 +113,8 @@
     font-size: 13px;
     color: rgba(255, 255, 255, 0.6);
     text-align: center;
-    pointer-events: none; /* wichtig bei Canvas + Klicks */
-    z-index: 10000;       /* immer oben */
+    pointer-events: none;
+    z-index: 10000;
   }
   
 </style>
@@ -109,17 +123,7 @@
 <body>
   <h1>Frag Friedrich</h1>
   <div id="loading">Avatar wird geladen…</div>
-
-  <!-- HINT immer über Canvas -->
-  <div id="hint" style="
-      position: absolute;
-      top: 10px;
-      left: 10px;
-      color: white;
-      font-size: 18px;
-      z-index: 1000;
-      pointer-events: none; /* Klicks passieren durch */
-  "></div>
+  <div id="hint"></div>
 
   <canvas id="avatarCanvas"></canvas>
   <button id="micBtn">🎤</button>
