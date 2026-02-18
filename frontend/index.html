@@ -107,15 +107,28 @@
 </head>
 
 <body>
-<h1>Frag Friedrich</h1>
-<div id="loading">Avatar wird geladen…</div>
-<div id="hint" style="position:absolute;top:10px;left:10px;color:white;font-size:18px;"></div>
-<canvas id="avatarCanvas"></canvas>
-<button id="micBtn">🎤</button>
-<footer>
-© 2025 Dr. Christoph Dammann
-</footer>
+  <h1>Frag Friedrich</h1>
+  <div id="loading">Avatar wird geladen…</div>
+
+  <!-- HINT immer über Canvas -->
+  <div id="hint" style="
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      color: white;
+      font-size: 18px;
+      z-index: 1000;
+      pointer-events: none; /* Klicks passieren durch */
+  "></div>
+
+  <canvas id="avatarCanvas"></canvas>
+  <button id="micBtn">🎤</button>
+
+  <footer>
+    © 2025 Dr. Christoph Dammann
+  </footer>
 </body>
+
 <script src="https://cdn.jsdelivr.net/npm/three@0.146.0/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.146.0/examples/js/loaders/GLTFLoader.js"></script>
 
@@ -265,10 +278,7 @@ function resetMovements() {
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setClearColor(0x000000);
 
-    // ✅ Jetzt kann showHint aufgerufen werden
-    showHint("Weck mich auf");
-
-/* -----------------------------
+   /* -----------------------------
    THREE.js SETUP
 ----------------------------- */
 
@@ -618,6 +628,9 @@ function startInteraction() {
         lastTranscript = "";
         STATE = "idle";
 
+        // Hinweistext verstecken
+        hideHint();
+
         if (model) {
           model.position.y = baseY;
           model.rotation.x = baseRotX;
@@ -649,7 +662,10 @@ function startInteraction() {
     lastTranscript = "";
     listeningFinished = false;
     STATE = "listen";
+
+    // Hinweistext ausblenden, da Aufnahme startet
     hideHint();
+
     try {
       recognition.start();
       recRunning = true;
@@ -689,6 +705,17 @@ document.addEventListener("keydown", (e) => {
 function startRecognition() {
   // absichtlich leer (Kompatibilität)
 }
+
+// ===============================
+// HINT-FUNKTION (VERSTECKEN)
+// ===============================
+function hideHint() {
+  const hintElement = document.getElementById("hint");
+  if (hintElement) {
+    hintElement.textContent = "";
+  }
+}
+
 /* ===============================
    🏛️ MUSEUMS-RESET (PASSIV & SICHER)
 ================================ */
