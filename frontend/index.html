@@ -133,7 +133,21 @@
   <footer>
     © 2025 Dr. Christoph Dammann
   </footer>
+
+  <script>
+    // ===============================
+    // Initialisierung der Hinweistexte
+    // ===============================
+    document.addEventListener("DOMContentLoaded", () => {
+      const hintText = document.getElementById("hintText");
+      const hintTextQuestion = document.getElementById("hintTextQuestion");
+
+      if (hintText) hintText.innerText = "Weck mich auf";
+      if (hintTextQuestion) hintTextQuestion.innerText = "";
+    });
+  </script>
 </body>
+
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.146.0/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.146.0/examples/js/loaders/GLTFLoader.js"></script>
@@ -251,19 +265,19 @@ function resetMovements() {
   talking = false;
 }
 
-    // ===============================
-    // HINT-FUNKTION (TEXT EINBLENDEN)
-    // ===============================
-    function showHint(message) {
-      const hintElement = document.getElementById("hint");
-      if (hintElement) {
-        hintElement.textContent = message;
-      } else {
-        console.warn("Hint-Element nicht gefunden");
-      }
-    }
-    
-   /* -----------------------------
+   // ===============================
+// HINT-FUNKTION (TEXT EINBLENDEN)
+// ===============================
+function showHint(message) {
+  const hintElement = document.getElementById("hint");
+  if (hintElement) {
+    hintElement.textContent = message;
+  } else {
+    console.warn("Hint-Element nicht gefunden");
+  }
+}
+
+/* -----------------------------
    THREE.js SETUP
 ----------------------------- */
 
@@ -284,11 +298,22 @@ const renderer = new THREE.WebGLRenderer({
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setClearColor(0x000000);
-document.getElementById("hintText").innerText = "Weck mich auf";
+
+// ===============================
+// Initialisierung der Hinweistexte beim Laden
+// ===============================
+document.addEventListener("DOMContentLoaded", () => {
+  const hintText = document.getElementById("hintText");
+  const hintTextQuestion = document.getElementById("hintTextQuestion");
+
+  if (hintText) hintText.innerText = "Weck mich auf";
+  if (hintTextQuestion) hintTextQuestion.innerText = "";
+});
 
 /* -----------------------------
    LICHT
 ----------------------------- */
+
 const dirLight = new THREE.DirectionalLight(0xffffff, 2);
 dirLight.position.set(1, 1, 2);
 scene.add(dirLight);
@@ -597,12 +622,23 @@ function startInteraction() {
     recRunning = false;
     listeningFinished = false;
 
+    // Sprachausgabe starten
     speak(
       "Seid gegrüßt, mein Freund. Ich bin Friedrich Barbarossa, nach fast neunhundert Jahren im Kaiserberg zu Lautern erwacht. Was ist Euer Begehr?",
       false
     );
 
-       // 🕰️ Auto-Reset: wenn 2 Minuten keine Frage kommt → zurück in Startzustand
+    // Hinweistextfrage erst nach Begrüßung (12 s Verzögerung)
+    setTimeout(() => {
+      if (STATE === "greet" && !recRunning && !talking) {
+        const hintTextQuestion = document.getElementById("hintTextQuestion");
+        if (hintTextQuestion) {
+          hintTextQuestion.innerText = "Um Frage zu stellen, Knopf drücken";
+        }
+      }
+    }, 12000); // 12 Sekunden nach Start der Begrüßung
+
+    // 🕰️ Auto-Reset: wenn 2 Minuten keine Frage kommt → zurück in Startzustand
     if (greetTimeout) clearTimeout(greetTimeout);
     greetTimeout = setTimeout(() => {
       if (STATE === "greet" && !recRunning && !talking) {
@@ -613,8 +649,11 @@ function startInteraction() {
         lastTranscript = "";
         STATE = "idle";
 
-        // Hinweistext verstecken
-        hideHint();
+        // Hinweistexte zurücksetzen
+        const hintText = document.getElementById("hintText");
+        const hintTextQuestion = document.getElementById("hintTextQuestion");
+        if (hintText) hintText.innerText = "Weck mich auf";
+        if (hintTextQuestion) hintTextQuestion.innerText = "";
 
         if (model) {
           model.position.y = baseY;
@@ -648,8 +687,9 @@ function startInteraction() {
     listeningFinished = false;
     STATE = "listen";
 
-    // Hinweistext ausblenden, da Aufnahme startet
-    hideHint();
+    // Hinweistextfrage während Aufnahme ausblenden
+    const hintTextQuestion = document.getElementById("hintTextQuestion");
+    if (hintTextQuestion) hintTextQuestion.innerText = "";
 
     try {
       recognition.start();
@@ -686,7 +726,6 @@ document.addEventListener("keydown", (e) => {
 /* ===============================
    RECOGNITION START (Dummy)
 ================================ */
-
 function startRecognition() {
   // absichtlich leer (Kompatibilität)
 }
@@ -701,10 +740,10 @@ function hideHint() {
   }
 }
 
-
 /* ===============================
    🏛️ MUSEUMS-RESET (PASSIV & SICHER)
 ================================ */
+
 
 function museumReset(reason = "") {
   console.log("🛡️ Museum-Reset:", reason);
@@ -881,7 +920,7 @@ function speak(text, slow = false) {
      (für Pre-End-Stop)
   ----------------------------- */
   function estimateSpeechDurationMs(text, slow) {
-    const charsPerSecond = slow ? 8 : 12; // bewährter Desktop-Chrome-Wert
+    const charsPerSecond = slow ? 8 : 12;
     return (text.length / charsPerSecond) * 1000;
   }
 
@@ -893,7 +932,6 @@ function speak(text, slow = false) {
     hardStopToRest();
     startVisemes();
 
-    // 🛑 Pre-End-Stop: Mund ca. 0,5 s vor Audioende schließen
     const PRE_END_STOP_MS = 500;
     const estimated = estimateSpeechDurationMs(text, slow);
 
@@ -921,9 +959,9 @@ function speak(text, slow = false) {
     }
   };
 
-   /* -----------------------------
+  /* -----------------------------
      ENDE – ABSOLUTER SCHLUSS
-     + MOUTH-COOLDOWN GEGEN NACHKLAPPERN
+     + MOUTH-COOLDOWN
   ----------------------------- */
   u.onend = () => {
     if (preEndTimer) {
@@ -934,7 +972,6 @@ function speak(text, slow = false) {
     hardStopToRest();
     talking = false;
 
-    // 🛑 kurzer Mund-Cooldown (fängt letzte Frames ab)
     mouthCooldown = true;
     setTimeout(() => {
       mouthCooldown = false;
