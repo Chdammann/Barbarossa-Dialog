@@ -198,6 +198,7 @@ let runId = 0;          // 🔒 eindeutiger Durchlaufzähler
 let listeningFinished = false;
 let buttonLocked = false;
 let mouthCooldown = false;
+let greetTimeout = null;
 
 
 // === Bewegungszustände ===
@@ -566,6 +567,26 @@ function startInteraction() {
       "Seid gegrüßt, mein Freund. Ich bin Friedrich Barbarossa, nach fast neunhundert Jahren im Kaiserberg zu Lautern erwacht. Was ist Euer Begehr?",
       false
     );
+
+    // 🕰️ Auto-Reset: wenn 2 Minuten keine Frage kommt → zurück in Startzustand
+    if (greetTimeout) clearTimeout(greetTimeout);
+    greetTimeout = setTimeout(() => {
+      if (STATE === "greet" && !recRunning && !talking) {
+        console.log("⏳ Begrüßung ohne Reaktion – Reset auf Startzustand");
+
+        resetMovements();
+        greeted = false;
+        lastTranscript = "";
+        STATE = "idle";
+
+        if (model) {
+          model.position.y = baseY;
+          model.rotation.x = baseRotX;
+          model.rotation.y = baseRotY - Math.PI / 2;
+        }
+      }
+    }, 120000); // 2 Minuten
+
     return;
   }
 
@@ -576,6 +597,12 @@ function startInteraction() {
     if (!("webkitSpeechRecognition" in window)) {
       alert("Spracherkennung wird von diesem Browser nicht unterstützt.");
       return;
+    }
+
+    // 🛑 Auto-Reset abbrechen, da Nutzer reagiert hat
+    if (greetTimeout) {
+      clearTimeout(greetTimeout);
+      greetTimeout = null;
     }
 
     initRecognition();
