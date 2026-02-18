@@ -102,18 +102,20 @@
     pointer-events: none; /* wichtig bei Canvas + Klicks */
     z-index: 10000;       /* immer oben */
   }
+  
 </style>
 </head>
 
 <body>
 <h1>Frag Friedrich</h1>
 <div id="loading">Avatar wird geladen…</div>
+<div id="hint" style="position:absolute;top:10px;left:10px;color:white;font-size:18px;"></div>
 <canvas id="avatarCanvas"></canvas>
 <button id="micBtn">🎤</button>
 <footer>
 © 2025 Dr. Christoph Dammann
 </footer>
-
+</body>
 <script src="https://cdn.jsdelivr.net/npm/three@0.146.0/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.146.0/examples/js/loaders/GLTFLoader.js"></script>
 
@@ -229,11 +231,7 @@ function resetMovements() {
   toIdlePose = false;
   talking = false;
 }
-<body>
-  <canvas id="avatarCanvas"></canvas>
-  <div id="hint" style="position:absolute;top:10px;left:10px;color:white;font-size:18px;"></div>
 
-  <script>
     // ===============================
     // HINT-FUNKTION (TEXT EINBLENDEN)
     // ===============================
