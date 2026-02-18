@@ -256,28 +256,7 @@ function resetMovements() {
         console.warn("Hint-Element nicht gefunden");
       }
     }
-
-    // ===============================
-    // THREE.js SETUP
-    // ===============================
-    const scene = new THREE.Scene();
-
-    const camera = new THREE.PerspectiveCamera(
-      30,
-      window.innerWidth / window.innerHeight,
-      0.1,
-      1000
-    );
-    camera.position.set(0, 0, 2.8);
-
-    const renderer = new THREE.WebGLRenderer({
-      canvas: document.getElementById("avatarCanvas"),
-      antialias: true
-    });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.setClearColor(0x000000);
-
+    
    /* -----------------------------
    THREE.js SETUP
 ----------------------------- */
