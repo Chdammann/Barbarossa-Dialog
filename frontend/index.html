@@ -229,6 +229,46 @@ function resetMovements() {
   toIdlePose = false;
   talking = false;
 }
+<body>
+  <canvas id="avatarCanvas"></canvas>
+  <div id="hint" style="position:absolute;top:10px;left:10px;color:white;font-size:18px;"></div>
+
+  <script>
+    // ===============================
+    // HINT-FUNKTION (TEXT EINBLENDEN)
+    // ===============================
+    function showHint(message) {
+      const hintElement = document.getElementById("hint");
+      if (hintElement) {
+        hintElement.textContent = message;
+      } else {
+        console.warn("Hint-Element nicht gefunden");
+      }
+    }
+
+    // ===============================
+    // THREE.js SETUP
+    // ===============================
+    const scene = new THREE.Scene();
+
+    const camera = new THREE.PerspectiveCamera(
+      30,
+      window.innerWidth / window.innerHeight,
+      0.1,
+      1000
+    );
+    camera.position.set(0, 0, 2.8);
+
+    const renderer = new THREE.WebGLRenderer({
+      canvas: document.getElementById("avatarCanvas"),
+      antialias: true
+    });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setClearColor(0x000000);
+
+    // ✅ Jetzt kann showHint aufgerufen werden
+    showHint("Weck mich auf");
 
 /* -----------------------------
    THREE.js SETUP
