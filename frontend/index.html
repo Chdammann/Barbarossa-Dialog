@@ -920,7 +920,7 @@ function speak(text, slow = false) {
      (für Pre-End-Stop)
   ----------------------------- */
   function estimateSpeechDurationMs(text, slow) {
-    const charsPerSecond = slow ? 8 : 12;
+    const charsPerSecond = slow ? 8 : 12; // bewährter Desktop-Chrome-Wert
     return (text.length / charsPerSecond) * 1000;
   }
 
@@ -932,6 +932,7 @@ function speak(text, slow = false) {
     hardStopToRest();
     startVisemes();
 
+    // 🛑 Pre-End-Stop: Mund ca. 0,5 s vor Audioende schließen
     const PRE_END_STOP_MS = 500;
     const estimated = estimateSpeechDurationMs(text, slow);
 
@@ -959,9 +960,9 @@ function speak(text, slow = false) {
     }
   };
 
-  /* -----------------------------
+   /* -----------------------------
      ENDE – ABSOLUTER SCHLUSS
-     + MOUTH-COOLDOWN
+     + MOUTH-COOLDOWN GEGEN NACHKLAPPERN
   ----------------------------- */
   u.onend = () => {
     if (preEndTimer) {
@@ -972,20 +973,26 @@ function speak(text, slow = false) {
     hardStopToRest();
     talking = false;
 
+    // 🛑 kurzer Mund-Cooldown (fängt letzte Frames ab)
     mouthCooldown = true;
     setTimeout(() => {
       mouthCooldown = false;
     }, 120);
 
-    // 👉 NACH BEGRÜSSUNG: Hinweis für Frage einblenden
+    // 👉 HINWEISE STABIL HANDHABEN
     if (STATE === "greet") {
+      // Nach Begrüßung: nur Frage-Hinweis zeigen
       const hintTextQuestion = document.getElementById("hintTextQuestion");
       if (hintTextQuestion) {
         hintTextQuestion.innerText = "Um Frage zu stellen, Knopf drücken";
       }
+      // Grund-Hinweis bleibt unverändert
+      const hintText = document.getElementById("hintText");
+      if (hintText) {
+        hintText.innerText = "Weck mich auf";
+      }
     }
 
-    // 👉 NACH BEANTWORTUNG: Reset auf Idle & Hinweistexte zurücksetzen
     if (STATE === "answer") {
       resetMovements();
       greeted = false;
@@ -993,6 +1000,7 @@ function speak(text, slow = false) {
       rising = false;
       STATE = "idle";
 
+      // Hinweistexte nach Reset
       const hintText = document.getElementById("hintText");
       const hintTextQuestion = document.getElementById("hintTextQuestion");
       if (hintText) hintText.innerText = "Weck mich auf";
@@ -1003,6 +1011,7 @@ function speak(text, slow = false) {
   // Start der Sprachausgabe
   speechSynthesis.speak(u);
 }
+
 
 
 /* -----------------------------
