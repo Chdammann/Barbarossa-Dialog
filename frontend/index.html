@@ -957,7 +957,34 @@ function speak(text, slow = false) {
      ENDE – ABSOLUTER SCHLUSS
      + MOUTH-COOLDOWN GEGEN NACHKLAPPERN
   ----------------------------- */
-  u.onend = () => {
+u.onend = () => {
+  if (preEndTimer) {
+    clearTimeout(preEndTimer);
+    preEndTimer = null;
+  }
+
+  hardStopToRest();
+  talking = false;
+
+  // 🛑 kurzer Mund-Cooldown (fängt letzte Frames ab)
+  mouthCooldown = true;
+  setTimeout(() => {
+    mouthCooldown = false;
+  }, 120);
+
+  // 🟢 NACH BEGRÜSSUNG → UI-HINWEIS SETZEN
+  if (STATE === "greet") {
+    showHint("Kurz Knopf drücken und fragen");
+  }
+
+  if (STATE === "answer") {
+    resetMovements();
+    greeted = false;
+    hmNeigen = false;
+    rising = false;
+    STATE = "idle";
+  }
+};
     if (preEndTimer) {
       clearTimeout(preEndTimer);
       preEndTimer = null;
