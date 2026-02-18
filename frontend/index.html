@@ -124,6 +124,8 @@
   <h1>Frag Friedrich</h1>
   <div id="loading">Avatar wird geladen…</div>
   <div id="hint"></div>
+  <div id="hintText">Weck mich auf</div>
+  <div id="hintTextQuestion"></div>
 
   <canvas id="avatarCanvas"></canvas>
   <button id="micBtn">🎤</button>
@@ -598,6 +600,7 @@ function startInteraction() {
       "Seid gegrüßt, mein Freund. Ich bin Friedrich Barbarossa, nach fast neunhundert Jahren im Kaiserberg zu Lautern erwacht. Was ist Euer Begehr?",
       false
     );
+
     showHint("Um eine Frage zu stellen, Knopf drücken");
 
     // 🕰️ Auto-Reset: wenn 2 Minuten keine Frage kommt → zurück in Startzustand
@@ -690,7 +693,7 @@ function startRecognition() {
 }
 
 // ===============================
-// HINT-FUNKTION (VERSTECKEN)
+// HINT-FUNKTION
 // ===============================
 function hideHint() {
   const hintElement = document.getElementById("hint");
@@ -698,6 +701,17 @@ function hideHint() {
     hintElement.textContent = "";
   }
 }
+
+// ===============================
+// HINT-FUNKTION
+// ===============================
+function showHint(text) {
+  const hintElement = document.getElementById("hint");
+  if (hintElement) {
+    hintElement.textContent = text;
+  }
+}
+
 
 /* ===============================
    🏛️ MUSEUMS-RESET (PASSIV & SICHER)
@@ -943,12 +957,19 @@ function speak(text, slow = false) {
       hmNeigen = false;
       rising = false;
       STATE = "idle";
+
+      // Hinweistexte nach Reset wiederherstellen
+      const hintText = document.getElementById("hintText");
+      const hintTextQuestion = document.getElementById("hintTextQuestion");
+      if (hintText) hintText.innerText = "Weck mich auf";
+      if (hintTextQuestion) hintTextQuestion.innerText = "Um Frage zu stellen, Knopf drücken";
     }
   };
 
   // Start der Sprachausgabe
   speechSynthesis.speak(u);
 }
+
 /* -----------------------------
    RESIZE
 ----------------------------- */
