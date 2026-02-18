@@ -622,21 +622,16 @@ function startInteraction() {
     recRunning = false;
     listeningFinished = false;
 
-    // Sprachausgabe starten
     speak(
       "Seid gegrüßt, mein Freund. Ich bin Friedrich Barbarossa, nach fast neunhundert Jahren im Kaiserberg zu Lautern erwacht. Was ist Euer Begehr?",
       false
     );
 
-    // Hinweistextfrage erst nach Begrüßung (12 s Verzögerung)
-    setTimeout(() => {
-      if (STATE === "greet" && !recRunning && !talking) {
-        const hintTextQuestion = document.getElementById("hintTextQuestion");
-        if (hintTextQuestion) {
-          hintTextQuestion.innerText = "Um Frage zu stellen, Knopf drücken";
-        }
-      }
-    }, 12000); // 12 Sekunden nach Start der Begrüßung
+    // Hinweistext beim Start stabil setzen
+    const hintText = document.getElementById("hintText");
+    const hintTextQuestion = document.getElementById("hintTextQuestion");
+    if (hintText) hintText.innerText = "Weck mich auf";
+    if (hintTextQuestion) hintTextQuestion.innerText = "";
 
     // 🕰️ Auto-Reset: wenn 2 Minuten keine Frage kommt → zurück in Startzustand
     if (greetTimeout) clearTimeout(greetTimeout);
@@ -649,11 +644,8 @@ function startInteraction() {
         lastTranscript = "";
         STATE = "idle";
 
-        // Hinweistexte zurücksetzen
-        const hintText = document.getElementById("hintText");
-        const hintTextQuestion = document.getElementById("hintTextQuestion");
-        if (hintText) hintText.innerText = "Weck mich auf";
-        if (hintTextQuestion) hintTextQuestion.innerText = "";
+        // Hinweistext verstecken
+        hideHint();
 
         if (model) {
           model.position.y = baseY;
@@ -687,9 +679,8 @@ function startInteraction() {
     listeningFinished = false;
     STATE = "listen";
 
-    // Hinweistextfrage während Aufnahme ausblenden
-    const hintTextQuestion = document.getElementById("hintTextQuestion");
-    if (hintTextQuestion) hintTextQuestion.innerText = "";
+    // Hinweistext ausblenden, da Aufnahme startet
+    hideHint();
 
     try {
       recognition.start();
@@ -726,6 +717,7 @@ document.addEventListener("keydown", (e) => {
 /* ===============================
    RECOGNITION START (Dummy)
 ================================ */
+
 function startRecognition() {
   // absichtlich leer (Kompatibilität)
 }
@@ -743,6 +735,7 @@ function hideHint() {
 /* ===============================
    🏛️ MUSEUMS-RESET (PASSIV & SICHER)
 ================================ */
+
 
 
 function museumReset(reason = "") {
