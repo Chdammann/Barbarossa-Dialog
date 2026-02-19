@@ -31,7 +31,7 @@
     width: 100%;
     height: 100%;
     display: block;
-    z-index: 1; /* Canvas Hintergrund */
+    z-index: 1;
   }
 
   /* -----------------------------
@@ -58,13 +58,19 @@
   ----------------------------- */
   #hint {
     position: absolute;
-    top: 70px;           /* unterhalb der Überschrift */
+    top: 70px;
     width: 100%;
     text-align: center;
-    color: #e0b36b;      /* gleiche Farbe wie Überschrift */
+    color: #e0b36b;
     font-size: 18px;
     z-index: 1000;
-    pointer-events: none; /* Klicks passieren durch */
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.4s ease;
+  }
+
+  #hint.visible {
+    opacity: 1;
   }
 
   /* -----------------------------
@@ -103,7 +109,7 @@
   }
 
   /* -----------------------------
-     FOOTER (unten zentriert, über allem)
+     FOOTER
   ----------------------------- */
   footer {
     position: fixed;
@@ -116,7 +122,6 @@
     pointer-events: none;
     z-index: 10000;
   }
-  
 </style>
 </head>
 
@@ -124,8 +129,6 @@
   <h1>Frag Friedrich</h1>
   <div id="loading">Avatar wird geladen…</div>
   <div id="hint"></div>
-  <div id="hintText">Weck mich auf</div>
-  <div id="hintTextQuestion"></div>
 
   <canvas id="avatarCanvas"></canvas>
   <button id="micBtn">🎤</button>
@@ -135,16 +138,20 @@
   </footer>
 
   <script>
-    // ===============================
-    // Initialisierung der Hinweistexte
-    // ===============================
-    document.addEventListener("DOMContentLoaded", () => {
-      const hintText = document.getElementById("hintText");
-      const hintTextQuestion = document.getElementById("hintTextQuestion");
+    function showQuestionHint() {
+      const hint = document.getElementById("hint");
+      if (!hint) return;
 
-      if (hintText) hintText.innerText = "Weck mich auf";
-      if (hintTextQuestion) hintTextQuestion.innerText = "";
-    });
+      hint.innerText = "Kurz Knopf drücken, dann fragen";
+      hint.classList.add("visible");
+    }
+
+    function hideQuestionHint() {
+      const hint = document.getElementById("hint");
+      if (!hint) return;
+
+      hint.classList.remove("visible");
+    }
   </script>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.146.0/build/three.min.js"></script>
@@ -156,6 +163,7 @@ console.log("SCRIPT START");
 /* ==========================================
    MUSEUM STARTUP CLEANUP – SICHER & LOKAL
    ========================================== */
+
 
 (function museumStartupCleanup() {
   try {
@@ -263,16 +271,26 @@ function resetMovements() {
   talking = false;
 }
 
-   // ===============================
-// HINT-FUNKTION (TEXT EINBLENDEN)
+  // ===============================
+// HINT-FUNKTIONEN (TEXT EIN-/AUSBLENDEN)
 // ===============================
+
 function showHint(message) {
   const hintElement = document.getElementById("hint");
-  if (hintElement) {
-    hintElement.textContent = message;
-  } else {
+  if (!hintElement) {
     console.warn("Hint-Element nicht gefunden");
+    return;
   }
+
+  hintElement.innerText = message;
+  hintElement.classList.add("visible");
+}
+
+function hideHint() {
+  const hintElement = document.getElementById("hint");
+  if (!hintElement) return;
+
+  hintElement.classList.remove("visible");
 }
 
 /* -----------------------------
@@ -297,20 +315,10 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setClearColor(0x000000);
 
-// ===============================
-// Initialisierung der Hinweistexte beim Laden
-// ===============================
-document.addEventListener("DOMContentLoaded", () => {
-  const hintText = document.getElementById("hintText");
-  const hintTextQuestion = document.getElementById("hintTextQuestion");
-
-  if (hintText) hintText.innerText = "Weck mich auf";
-  if (hintTextQuestion) hintTextQuestion.innerText = "";
-});
-
 /* -----------------------------
    LICHT
 ----------------------------- */
+
 
 const dirLight = new THREE.DirectionalLight(0xffffff, 2);
 dirLight.position.set(1, 1, 2);
@@ -580,9 +588,8 @@ function initRecognition() {
   }; // ✅ recognition.onend geschlossen
 }    // ✅ initRecognition geschlossen
 
-
 /* -----------------------------
-   BUTTON + ENTER – GREET & LISTEN (FINAL)
+   BUTTON + ENTER – GREET & LISTEN
 ----------------------------- */
 
 const micBtn = document.getElementById("micBtn");
@@ -592,7 +599,7 @@ function startInteraction() {
   // 🛡️ Museumsschutz: nur in definierten Zuständen
   if (STATE !== "idle" && STATE !== "greet") return;
 
-  // 🛡️ Zusätzlicher Schutz bei laufender Aktion
+  // 🛡️ Schutz bei laufender Aktion
   if (talking || recRunning) return;
 
   // 🔒 Button-Guard gegen Doppelklicks / Tasterprellen
@@ -613,23 +620,20 @@ function startInteraction() {
     rising = true;
     riseStartTime = performance.now();
 
-    // 🔁 Wake-sicher: alte Recognition hart verwerfen
-    try {
-      if (recognition) recognition.abort();
-    } catch (e) {}
+    // 🔁 Alte Recognition hart verwerfen
+    try { if (recognition) recognition.abort(); } catch (e) {}
     recRunning = false;
     listeningFinished = false;
 
+    // 🔊 Begrüßungstext abspielen
     speak(
       "Seid gegrüßt, mein Freund. Ich bin Friedrich Barbarossa, nach fast neunhundert Jahren im Kaiserberg zu Lautern erwacht. Was ist Euer Begehr?",
-      false
+      false,
+      () => {
+        // ✅ Hinweis direkt nach Ende der Begrüßung einblenden
+        showHint("Kurz Knopf drücken, dann fragen");
+      }
     );
-
-    // Hinweistext beim Start stabil setzen
-    const hintText = document.getElementById("hintText");
-    const hintTextQuestion = document.getElementById("hintTextQuestion");
-    if (hintText) hintText.innerText = "Weck mich auf";
-    if (hintTextQuestion) hintTextQuestion.innerText = "";
 
     // 🕰️ Auto-Reset: wenn 2 Minuten keine Frage kommt → zurück in Startzustand
     if (greetTimeout) clearTimeout(greetTimeout);
@@ -691,8 +695,7 @@ function startInteraction() {
   }
 
   /* ===============================
-     3️⃣ LISTEN
-     (Klicks werden ignoriert)
+     3️⃣ LISTEN (Klicks werden ignoriert)
   =============================== */
   if (STATE === "listen") return;
 }
@@ -712,6 +715,7 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+
 /* ===============================
    RECOGNITION START (Dummy)
 ================================ */
@@ -720,21 +724,21 @@ function startRecognition() {
   // absichtlich leer (Kompatibilität)
 }
 
-// ===============================
-// HINT-FUNKTION
-// ===============================
+/* ===============================
+   HINT-FUNKTIONEN
+================================ */
+
 function hideHint() {
   const hintElement = document.getElementById("hint");
-  if (hintElement) {
-    hintElement.textContent = "";
-  }
+  if (!hintElement) return;
+
+  hintElement.classList.remove("visible");
+  hintElement.innerText = "";
 }
 
 /* ===============================
    🏛️ MUSEUMS-RESET (PASSIV & SICHER)
 ================================ */
-
-
 
 function museumReset(reason = "") {
   console.log("🛡️ Museum-Reset:", reason);
@@ -776,7 +780,10 @@ function museumReset(reason = "") {
     model.rotation.x = baseRotX;
     model.rotation.y = baseRotY - Math.PI / 2;
   }
-  showHint("Weck mich auf");
+
+  // ✅ Hinweistext nach Reset anzeigen (optional)
+  showHint("Kurz Knopf drücken, dann fragen");
+
   console.log("🟢 Museum-Reset abgeschlossen");
 }
 
@@ -908,10 +915,9 @@ function speak(text, slow = false) {
 
   /* -----------------------------
      GROBE DAUER-SCHÄTZUNG
-     (für Pre-End-Stop)
   ----------------------------- */
   function estimateSpeechDurationMs(text, slow) {
-    const charsPerSecond = slow ? 8 : 12; // bewährter Desktop-Chrome-Wert
+    const charsPerSecond = slow ? 8 : 12;
     return (text.length / charsPerSecond) * 1000;
   }
 
@@ -923,7 +929,7 @@ function speak(text, slow = false) {
     hardStopToRest();
     startVisemes();
 
-    // 🛑 Pre-End-Stop: Mund ca. 0,5 s vor Audioende schließen
+    // Pre-End-Stop: Mund kurz vor Audioende schließen
     const PRE_END_STOP_MS = 500;
     const estimated = estimateSpeechDurationMs(text, slow);
 
@@ -951,38 +957,10 @@ function speak(text, slow = false) {
     }
   };
 
-   /* -----------------------------
+  /* -----------------------------
      ENDE – ABSOLUTER SCHLUSS
-     + MOUTH-COOLDOWN GEGEN NACHKLAPPERN
   ----------------------------- */
-u.onend = () => {
-  if (preEndTimer) {
-    clearTimeout(preEndTimer);
-    preEndTimer = null;
-  }
-
-  hardStopToRest();
-  talking = false;
-
-  // 🛑 kurzer Mund-Cooldown (fängt letzte Frames ab)
-  mouthCooldown = true;
-  setTimeout(() => {
-    mouthCooldown = false;
-  }, 120);
-
-  // 🟢 NACH BEGRÜSSUNG → UI-HINWEIS SETZEN
-  if (STATE === "greet") {
-    showHint("Kurz Knopf drücken und fragen");
-  }
-
-  if (STATE === "answer") {
-    resetMovements();
-    greeted = false;
-    hmNeigen = false;
-    rising = false;
-    STATE = "idle";
-  }
-};
+  u.onend = () => {
     if (preEndTimer) {
       clearTimeout(preEndTimer);
       preEndTimer = null;
@@ -991,26 +969,16 @@ u.onend = () => {
     hardStopToRest();
     talking = false;
 
-    // 🛑 kurzer Mund-Cooldown (fängt letzte Frames ab)
+    // Kurzer Mund-Cooldown
     mouthCooldown = true;
-    setTimeout(() => {
-      mouthCooldown = false;
-    }, 120);
+    setTimeout(() => { mouthCooldown = false; }, 120);
 
-    // 👉 HINWEISE STABIL HANDHABEN
+    // ✅ Nach Begrüßung → Hinweis einblenden
     if (STATE === "greet") {
-      // Nach Begrüßung: nur Frage-Hinweis zeigen
-      const hintTextQuestion = document.getElementById("hintTextQuestion");
-      if (hintTextQuestion) {
-        hintTextQuestion.innerText = "Um Frage zu stellen, Knopf drücken";
-      }
-      // Grund-Hinweis bleibt unverändert
-      const hintText = document.getElementById("hintText");
-      if (hintText) {
-        hintText.innerText = "Weck mich auf";
-      }
+      showHint("Kurz Knopf drücken, dann fragen");
     }
 
+    // ✅ Nach Antwort → Reset aller Zustände
     if (STATE === "answer") {
       resetMovements();
       greeted = false;
@@ -1018,20 +986,14 @@ u.onend = () => {
       rising = false;
       STATE = "idle";
 
-      // Hinweistexte nach Reset
-      const hintText = document.getElementById("hintText");
-      const hintTextQuestion = document.getElementById("hintTextQuestion");
-      if (hintText) hintText.innerText = "Weck mich auf";
-      if (hintTextQuestion) hintTextQuestion.innerText = "";
+      // Hinweis nach Reset ggf. ausblenden
+      hideHint();
     }
   };
 
   // Start der Sprachausgabe
   speechSynthesis.speak(u);
 }
-
-
-
 /* -----------------------------
    RESIZE
 ----------------------------- */
