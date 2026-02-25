@@ -48,11 +48,12 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-// === KI-Antwort auf gesprochene Frage ===
+// === KI-Antwort auf gesprochene Frage (DE/EN) ===
 app.post("/ask", async (req, res) => {
   try {
     const userText = req.body.text;
-    console.log("🎙️ Eingabe vom Benutzer:", userText);
+    const lang = req.body.lang || "de"; // NEU: Sprache vom Client
+    console.log("🎙️ Eingabe vom Benutzer:", userText, "Sprache:", lang);
 
     // ⭐⭐⭐ NEU: Diplomatische, leicht humorvolle AfD-Sonderregel
     if (
@@ -66,14 +67,15 @@ app.post("/ask", async (req, res) => {
     }
     // ⭐⭐⭐ Ende der Sonderregel
 
+    // 🌐 Prompt dynamisch nach Sprache
+    const systemPrompt = lang === "en"
+      ? "You are Emperor Frederick Barbarossa, awakened after almost nine centuries. Speak wisely with old-fashioned English, add small jokes and the humorous opinion of your loyal minister Nikolaus Härtel. Answer in 5 sentences, always ending with a complete sentence."
+      : "Du bist Kaiser Friedrich Barbarossa, der nach fast neunhundert Jahren des Schlummers im Kaiserberg zu Lautern erwacht ist. Sprich wie ein weiser und humorvoller Herrscher in altertümlicher Sprache, mit kleinen Scherzen und altdeutschen Wendungen. Füge noch eine scherzhafte Meinung deines treuen Ministerialen Nikolaus Härtel an. Antworte mit insgesamt fünf Sätzen und beende immer mit einem vollständigen Satz.";
+
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
-        {
-          role: "system",
-          content:
-            "Du bist Kaiser Friedrich Barbarossa, der nach fast neunhundert Jahren des Schlummers im Kaiserberg zu Lautern erwacht ist. Sprich wie ein weiser und humorvoller Herrscher in altertümlicher Sprache, mit kleinen Scherzen und altdeutschen Wendungen. Füge noch eine scherzhafte Meinung deines treuen Minnisterialen Nikolaus Härtel an. Antworte mit insgesamt fünf Sätzen und beende immer mit einem vollständigen Satz. Falls auf englisch gefragt wird, antworte auf englisch.",
-        },
+        { role: "system", content: systemPrompt },
         { role: "user", content: userText },
       ],
       temperature: 0.8,
@@ -99,8 +101,3 @@ app.use((req, res) => {
 app.listen(PORT, () => {
   console.log(`✅ Server läuft auf Port ${PORT}`);
 });
-
-
-
-
-
