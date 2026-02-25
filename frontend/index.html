@@ -861,7 +861,7 @@ setMaleVoice();
 function speak(text, slow = false) {
 
   const u = new SpeechSynthesisUtterance(text);
-  u.lang = "de-DE";
+  u.lang = detectedLanguage === "en" ? "en-US" : "de-DE";  // NEU: Sprache dynamisch
   u.rate = slow ? 0.85 : 1.0;
   if (typeof maleVoice !== "undefined" && maleVoice) {
     u.voice = maleVoice;
