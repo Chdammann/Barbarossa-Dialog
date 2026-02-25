@@ -627,55 +627,59 @@ function startInteraction() {
   /* ===============================
      1️⃣ IDLE → GREET
   =============================== */
-  if (STATE === "idle" && !greeted) {
-    greeted = true;
-    STATE = "greet";
+if (STATE === "idle" && !greeted) {
+  greeted = true;
+  STATE = "greet";
 
-    resetMovements();
+  resetMovements();
 
-    frontalFix = false;
-    rising = true;
-    riseStartTime = performance.now();
+  frontalFix = false;
+  rising = true;
+  riseStartTime = performance.now();
 
-    // 🔁 Alte Recognition hart verwerfen
-    try { if (recognition) recognition.abort(); } catch (e) {}
-    recRunning = false;
-    listeningFinished = false;
+  // 🔁 Alte Recognition hart verwerfen
+  try { if (recognition) recognition.abort(); } catch (e) {}
+  recRunning = false;
+  listeningFinished = false;
 
-    // 🔊 Begrüßungstext abspielen
-    speak(
-      "Seid gegrüßt, mein Freund. Ich bin Friedrich Barbarossa, nach fast neunhundert Jahren im Kaiserberg zu Lautern erwacht. Was ist Euer Begehr? Iff ju wonnt, s-piek inglisch.",
-      false,
-      () => {
-        // ✅ Hinweis direkt nach Ende der Begrüßung einblenden
-        showHint("Kurz Knopf drücken, dann fragen");
+  // 📝 Sprache für Begrüßung auf Deutsch zurücksetzen
+  detectedLanguage = "de";
+
+  // 🔊 Begrüßungstext abspielen
+  speak(
+    "Seid gegrüßt, mein Freund. Ich bin Friedrich Barbarossa, nach fast neunhundert Jahren im Kaiserberg zu Lautern erwacht. Was ist Euer Begehr? If ju wonnt, spiek inglisch.",
+    false,
+    "de", // optional, wenn du speak() so angepasst hast
+    () => {
+      // ✅ Hinweis direkt nach Ende der Begrüßung einblenden
+      showHint("Kurz Knopf drücken, dann fragen");
+    }
+  );
+
+  // 🕰️ Auto-Reset: wenn 2 Minuten keine Frage kommt → zurück in Startzustand
+  if (greetTimeout) clearTimeout(greetTimeout);
+  greetTimeout = setTimeout(() => {
+    if (STATE === "greet" && !recRunning && !talking) {
+      console.log("⏳ Begrüßung ohne Reaktion – Reset auf Startzustand");
+
+      resetMovements();
+      greeted = false;
+      lastTranscript = "";
+      STATE = "idle";
+
+      // Hinweistext verstecken
+      hideHint();
+
+      if (model) {
+        model.position.y = baseY;
+        model.rotation.x = baseRotX;
+        model.rotation.y = baseRotY - Math.PI / 2;
       }
-    );
+    }
+  }, 120000); // 2 Minuten
 
-    // 🕰️ Auto-Reset: wenn 2 Minuten keine Frage kommt → zurück in Startzustand
-    if (greetTimeout) clearTimeout(greetTimeout);
-    greetTimeout = setTimeout(() => {
-      if (STATE === "greet" && !recRunning && !talking) {
-        console.log("⏳ Begrüßung ohne Reaktion – Reset auf Startzustand");
-
-        resetMovements();
-        greeted = false;
-        lastTranscript = "";
-        STATE = "idle";
-
-        // Hinweistext verstecken
-        hideHint();
-
-        if (model) {
-          model.position.y = baseY;
-          model.rotation.x = baseRotX;
-          model.rotation.y = baseRotY - Math.PI / 2;
-        }
-      }
-    }, 120000); // 2 Minuten
-
-    return;
-  }
+  return;
+}
 
   /* ===============================
      2️⃣ GREET → LISTEN
