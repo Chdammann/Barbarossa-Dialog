@@ -501,6 +501,7 @@ function animate() {
 
 let recognition = null;
 let heardSomething = false;
+let detectedLanguage = "de";  // NEU: Sprache der letzten Eingabe
 
 /* -----------------------------
    Recognition sauber initialisieren
@@ -522,6 +523,7 @@ function initRecognition() {
     if (!res || res.trim().length < 2) return;
 
     lastTranscript = res;
+    detectedLanguage = detectLanguage(res); // NEU: Sprache erkennen
     heardSomething = true;
   };
 
@@ -574,7 +576,8 @@ function initRecognition() {
           rising = true;
           riseStartTime = performance.now();
 
-          speak(data.answer);
+          // 🗣️ Antwort in erkannter Sprache
+          speak(data.answer, detectedLanguage === "en");
         }
       }, 120);
 
@@ -582,7 +585,7 @@ function initRecognition() {
     .catch(() => {
       STATE = "answer";
       resetMovements();
-      speak("Verzeiht, ich habe Euch nicht recht verstanden.");
+      speak("Verzeiht, ich habe Euch nicht recht verstanden.", detectedLanguage === "en");
     });
 
   }; // ✅ recognition.onend geschlossen
