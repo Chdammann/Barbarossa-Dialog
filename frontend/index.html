@@ -573,7 +573,10 @@ function initRecognition() {
     fetch("/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: lastTranscript })
+      body: JSON.stringify({ 
+        text: lastTranscript,
+        lang: detectedLanguage   // NEU: Sprache mitschicken
+      })
     })
     .then(r => r.json())
     .then(data => {
@@ -602,7 +605,6 @@ function initRecognition() {
 
   }; // ✅ recognition.onend geschlossen
 }    // ✅ initRecognition geschlossen
-
 /* -----------------------------
    BUTTON + ENTER – GREET & LISTEN
 ----------------------------- */
