@@ -241,7 +241,19 @@ let buttonLocked = false;
 let mouthCooldown = false;
 let greetTimeout = null;
 
+// NEU: einfache Sprachdetektion Deutsch / Englisch
+function detectLanguage(text) {
+  const en = ["the","what","how","why","where","when","who"];
+  const de = ["der","die","das","wie","warum","was","wo","wer"];
 
+  let e = 0, d = 0;
+  const t = text.toLowerCase();
+
+  en.forEach(w => { if (t.includes(w)) e++; });
+  de.forEach(w => { if (t.includes(w)) d++; });
+
+  return e > d ? "en" : "de";
+}
 // === Bewegungszustände ===
 let frontalFix = true;
 let hmNeigen = false;
@@ -840,6 +852,7 @@ speechSynthesis.onvoiceschanged = setMaleVoice;
 
 // sofortiger Versuch (falls Stimmen schon da sind)
 setMaleVoice();
+  
 /* -----------------------------
    SPEAK – FINAL (VISEME-STABIL)
 ----------------------------- */
