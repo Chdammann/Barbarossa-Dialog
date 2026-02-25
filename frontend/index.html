@@ -624,7 +624,7 @@ function startInteraction() {
   buttonLocked = true;
   setTimeout(() => buttonLocked = false, 400);
 
-  /* ===============================
+/* ===============================
      1️⃣ IDLE → GREET
   =============================== */
 if (STATE === "idle" && !greeted) {
@@ -642,19 +642,12 @@ if (STATE === "idle" && !greeted) {
   recRunning = false;
   listeningFinished = false;
 
-  // 📝 Sprache für Begrüßung auf Deutsch zurücksetzen
-  detectedLanguage = "de";
-
-  // 🔊 Begrüßungstext abspielen
-  speak(
-    "Seid gegrüßt, mein Freund. Ich bin Friedrich Barbarossa, nach fast neunhundert Jahren im Kaiserberg zu Lautern erwacht. Was ist Euer Begehr? If ju wonnt, spiek inglisch.",
-    false,
-    "de", // optional, wenn du speak() so angepasst hast
-    () => {
-      // ✅ Hinweis direkt nach Ende der Begrüßung einblenden
-      showHint("Kurz Knopf drücken, dann fragen");
-    }
-  );
+speak(
+  "Seid gegrüßt, mein Freund. Ich bin Friedrich Barbarossa, nach fast neunhundert Jahren im Kaiserberg zu Lautern erwacht. Was ist Euer Begehr? If ju wonnt, spiek inglisch.",
+  false,
+  "de", // Sprache nur für Begrüßung erzwingen
+  () => { showHint("Kurz Knopf drücken, dann fragen"); }
+);
 
   // 🕰️ Auto-Reset: wenn 2 Minuten keine Frage kommt → zurück in Startzustand
   if (greetTimeout) clearTimeout(greetTimeout);
@@ -862,10 +855,15 @@ setMaleVoice();
 /* -----------------------------
    SPEAK – FINAL (VISEME-STABIL)
 ----------------------------- */
-function speak(text, slow = false) {
+function speak(text, slow = false, forceLang = null, onEnd = null) {
 
   const u = new SpeechSynthesisUtterance(text);
-  u.lang = detectedLanguage === "en" ? "en-US" : "de-DE";  // NEU: Sprache dynamisch
+
+  // ✅ Sprache wählen: forceLang priorisiert, sonst globale detectedLanguage
+  u.lang = forceLang
+    ? (forceLang === "en" ? "en-US" : "de-DE")
+    : (detectedLanguage === "en" ? "en-US" : "de-DE");
+
   u.rate = slow ? 0.85 : 1.0;
   if (typeof maleVoice !== "undefined" && maleVoice) {
     u.voice = maleVoice;
@@ -1010,6 +1008,11 @@ function speak(text, slow = false) {
 
       // Hinweis nach Reset ggf. ausblenden
       hideHint();
+    }
+
+    // ✅ Optionaler Callback nach Ende der Sprachausgabe
+    if (onEnd && typeof onEnd === "function") {
+      onEnd();
     }
   };
 
