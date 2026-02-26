@@ -630,9 +630,9 @@ function initRecognition() {
        THINK-PHASE
     =============================== */
     STATE = "think";
-    resetMovements();
+    resetMovements(); // Kopfbewegung vorbereiten
 
-    // Think-Bewegung einen Frame verzögert setzen
+    // Think-Neigung leicht verzögert starten
     requestAnimationFrame(() => {
       hmNeigen = true;
       hmStartTime = performance.now();
@@ -640,43 +640,53 @@ function initRecognition() {
 
     // Denkphrase in aktueller Sprache
     const thinkText = detectedLanguage === "en" ? "Uhm… one moment, please." : "Ähm … einen Moment bitte.";
-    speak(thinkText, true, detectedLanguage);
-
-    /* ===============================
-       FRAGE → SERVER → ANTWORT
-       (erst NACH Think-Phase)
-    =============================== */
-    const waitForThinkEnd = setInterval(() => {
-      if (!talking) {
-        clearInterval(waitForThinkEnd);
-
-        STATE = "answer";
-        resetMovements();
-
-        rising = true;
-        riseStartTime = performance.now();
-
-        // Antwort in erkannter Sprache – forceLang übergeben
-        fetch("/ask", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ 
-            text: lastTranscript,
-            lang: detectedLanguage
-          })
-        })
-        .then(r => r.json())
-        .then(data => {
-          if (!data.answer) data.answer = detectedLanguage === "en" ? "Sorry, I didn't understand." : "Verzeiht, ich habe Euch nicht recht verstanden.";
-          speak(data.answer, false, detectedLanguage);
-        })
-        .catch(() => {
-          const fallback = detectedLanguage === "en" ? "Sorry, I didn't understand." : "Verzeiht, ich habe Euch nicht recht verstanden.";
-          speak(fallback, false, detectedLanguage);
-        });
-      }
-    }, 120);
+    speak(thinkText, true, detectedLanguage, () => {
+      // Nach Ende der Think-Phase die Antwort starten
+      hmNeigen = false; // Think-Neigung zurücksetzen
+      startAnswerFetch();
+    });
   };
+}
+
+/* -----------------------------
+   Antwort-Phase sauber kapseln
+----------------------------- */
+function startAnswerFetch() {
+  STATE = "answer";
+  resetMovements();
+  rising = true;
+  riseStartTime = performance.now();
+
+  fetch("/ask", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ 
+      text: lastTranscript,
+      lang: detectedLanguage
+    })
+  })
+  .then(r => r.json())
+  .then(data => {
+    const answerText = data.answer || (detectedLanguage === "en" ? "Sorry, I didn't understand." : "Verzeiht, ich habe Euch nicht recht verstanden.");
+    speak(answerText, false, detectedLanguage, () => {
+      // Antwort vollständig beendet → Frontale zurück
+      rising = false;
+      STATE = "idle";
+      resetMovements();
+      greeted = false;
+      hideHint();
+    });
+  })
+  .catch(() => {
+    const fallback = detectedLanguage === "en" ? "Sorry, I didn't understand." : "Verzeiht, ich habe Euch nicht recht verstanden.";
+    speak(fallback, false, detectedLanguage, () => {
+      rising = false;
+      STATE = "idle";
+      resetMovements();
+      greeted = false;
+      hideHint();
+    });
+  });
 }
 
 /* -----------------------------
@@ -710,13 +720,13 @@ const micBtn = document.getElementById("micBtn");
 
 function startInteraction() {
 
-  // 🛡️ Museumsschutz: nur in definierten Zuständen
+  // 🛡️ Nur in erlaubten Zuständen reagieren
   if (STATE !== "idle" && STATE !== "greet") return;
 
   // 🛡️ Schutz bei laufender Aktion
   if (talking || recRunning) return;
 
-  // 🔒 Button-Guard gegen Doppelklicks / Tasterprellen
+  // 🔒 Button-Guard gegen Doppelklick / Prellen
   if (buttonLocked) return;
   buttonLocked = true;
   setTimeout(() => buttonLocked = false, 1200);
@@ -729,37 +739,33 @@ function startInteraction() {
     STATE = "greet";
 
     resetMovements();
-
     frontalFix = false;
     rising = true;
     riseStartTime = performance.now();
 
-    // 🔁 Alte Recognition hart verwerfen
+    // 🔁 Alte Recognition hart abbrechen
     try { if (recognition) recognition.abort(); } catch (e) {}
     recRunning = false;
     listeningFinished = false;
 
-    // ✅ Begrüßung immer männlich Deutsch
+    // ✅ Begrüßung männlich auf Deutsch, hint erst danach
     speak(
       "Seid gegrüßt, mein Freund. Ich bin Friedrich Barbarossa, nach fast neunhundert Jahren im Kaiserberg zu Lautern erwacht. Was ist Euer Begehr? If ju wonnt, spiek inglisch.",
       false,
-      "de", // Sprache für Begrüßung erzwingen
+      "de",
       () => { showHint("Kurz Knopf drücken, dann fragen"); }
     );
 
-    // 🕰️ Auto-Reset: wenn 2 Minuten keine Frage kommt → zurück in Startzustand
+    // 🕰️ Auto-Reset nach 2 Minuten ohne Reaktion
     if (greetTimeout) clearTimeout(greetTimeout);
     greetTimeout = setTimeout(() => {
       if (STATE === "greet" && !recRunning && !talking) {
         console.log("⏳ Begrüßung ohne Reaktion – Reset auf Startzustand");
-
         resetMovements();
         greeted = false;
         lastTranscript = "";
         STATE = "idle";
-
         hideHint();
-
         if (model) {
           model.position.y = baseY;
           model.rotation.x = baseRotX;
@@ -780,7 +786,7 @@ function startInteraction() {
       return;
     }
 
-    // 🛑 Auto-Reset abbrechen
+    // 🔄 Auto-Reset abbrechen
     if (greetTimeout) {
       clearTimeout(greetTimeout);
       greetTimeout = null;
@@ -794,7 +800,7 @@ function startInteraction() {
 
     hideHint();
 
-    // ✅ Sprache direkt aus detectedLanguage (Fallback Deutsch)
+    // ✅ Sprache aus detectedLanguage, Fallback auf Deutsch
     recognition.lang = detectedLanguage === "en" ? "en-US" : "de-DE";
 
     heardSomething = false;
@@ -811,7 +817,7 @@ function startInteraction() {
   }
 
   /* ===============================
-       3️⃣ LISTEN (Klicks werden ignoriert)
+       3️⃣ LISTEN – Klicks werden ignoriert
   =============================== */
   if (STATE === "listen") return;
 }
@@ -832,7 +838,6 @@ document.addEventListener("keydown", (e) => {
 /* ===============================
    RECOGNITION START (Dummy)
 ================================ */
-
 function startRecognition() {
   // absichtlich leer (Kompatibilität)
 }
@@ -923,19 +928,18 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
 
   const u = new SpeechSynthesisUtterance(text);
 
-  // ✅ Sprache bestimmen: forceLang priorisiert, sonst detectedLanguage global
+  // Sprache bestimmen: forceLang priorisiert, sonst detectedLanguage global
   const lang = forceLang ? forceLang : (detectedLanguage || "de");
   u.lang = (lang === "en") ? "en-US" : "de-DE";
 
-  // ✅ Stimme explizit setzen: Deutsch = maleVoice, Englisch = englishVoice
+  // Stimme explizit setzen
   if (lang === "en") {
-    u.voice = englishVoice || null; // nativ englisch
-  } else if (lang === "de") {
-    u.voice = maleVoice || germanVoice || null; // deutsch immer männlich
+    u.voice = englishVoice || null;
+  } else {
+    u.voice = maleVoice || germanVoice || null;
   }
 
-  // ✅ Pitch: Englisch tiefer, Deutsch normal
-  u.pitch = (lang === "en") ? 0.6 : 1.0;  // 0.0–2.0
+  u.pitch = (lang === "en") ? 0.6 : 1.0;
   u.rate = slow ? 0.85 : 1.0;
 
   const isGreeting = (STATE === "greet");
@@ -1016,7 +1020,8 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
   u.onstart = () => {
     talking = true;
     hardStopToRest();
-    startVisemes();
+
+    if (!isGreeting) startVisemes();
 
     const PRE_END_STOP_MS = 500;
     const estimated = estimateSpeechDurationMs(text, slow);
@@ -1073,7 +1078,6 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
       hideHint();
     }
 
-    // ✅ Optionaler Callback
     if (onEnd && typeof onEnd === "function") {
       onEnd();
     }
