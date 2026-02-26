@@ -241,7 +241,7 @@ let buttonLocked = false;
 let mouthCooldown = false;
 let greetTimeout = null;
 
-  // === Voice-Auswahl (GLOBAL) ===
+// === Voice-Auswahl (GLOBAL) ===
 let englishVoice = null;
 let germanVoice = null;
 
@@ -256,13 +256,14 @@ function loadVoices() {
     voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("google")) ||
     voices.find(v => v.lang.startsWith("en"));
 
-  console.log("🎤 Voices:", { germanVoice, englishVoice });
+  console.log("🎤 Voices geladen:", { germanVoice, englishVoice });
 }
 
+// Trigger, wenn Browser die Stimmen später nachlädt
 speechSynthesis.onvoiceschanged = loadVoices;
 loadVoices();
 
-// NEU: einfache Sprachdetektion Deutsch / Englisch
+// === NEU: einfache Sprachdetektion Deutsch / Englisch ===
 function detectLanguage(text) {
   const en = ["the","what","how","why","where","when","who"];
   const de = ["der","die","das","wie","warum","was","wo","wer"];
@@ -275,6 +276,7 @@ function detectLanguage(text) {
 
   return e > d ? "en" : "de";
 }
+
 // === Bewegungszustände ===
 let frontalFix = true;
 let hmNeigen = false;
@@ -880,18 +882,16 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
 
   const u = new SpeechSynthesisUtterance(text);
 
-  // ✅ Sprache bestimmen
-  const lang = forceLang ? forceLang : detectedLanguage;
+  // ✅ Sprache bestimmen: forceLang priorisiert, sonst detectedLanguage global
+  const lang = forceLang ? forceLang : detectedLanguage || "de";
   u.lang = (lang === "en") ? "en-US" : "de-DE";
 
-  // ✅ Stimme explizit setzen (Akzent-Fix!)
+  // ✅ Stimme explizit setzen (Akzent-Fix)
   if (lang === "en" && englishVoice) {
     u.voice = englishVoice;
-  }
-  else if (lang === "de" && germanVoice) {
+  } else if (lang === "de" && germanVoice) {
     u.voice = germanVoice;
-  }
-  else if (typeof maleVoice !== "undefined" && maleVoice) {
+  } else if (typeof maleVoice !== "undefined" && maleVoice) {
     u.voice = maleVoice;
   }
 
@@ -1032,11 +1032,13 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
       hideHint();
     }
 
+    // ✅ Optionaler Callback
     if (onEnd && typeof onEnd === "function") {
       onEnd();
     }
   };
 
+  // ✅ Sprachausgabe starten
   speechSynthesis.speak(u);
 }
 /* -----------------------------
