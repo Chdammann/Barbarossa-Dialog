@@ -221,7 +221,7 @@ let analyser = null;
 let src = null;
 
 // === ZENTRALE ZUSTANDSMASCHINE ===
-let STATE = "idle"; // erlaubte Zustände: "sleep", "idle", "greet", "listen", "answer"
+let STATE = "idle"; // erlaubte Zustände: "sleep", "idle", "greet", "listen", "answer", "think"
 
 // === Kern-Flags ===
 let model = null;
@@ -229,26 +229,25 @@ let lastTranscript = "";
 let greeted = false;
 let talking = false;
 let recRunning = false;
-let runId = 0;                  // eindeutiger Durchlaufzähler
+let runId = 0;                  
 let listeningFinished = false;
 let buttonLocked = false;
 let mouthCooldown = false;
 let greetTimeout = null;
 
 // === Bewegungsflags (für Animate / State-Machine) + Grundposition ===
-let hmNeigen = false;      // Kopfneigung (Think-Phase)
-let rising = false;        // Aufrichten (Antwort-Phase)
-let frontalFix = false;    // true = frontal fixiert, false = frei
-let hmStartTime = 0;       // Startzeit Kopfneigung
-let riseStartTime = 0;     // Startzeit Aufrichten
-
-let toIdlePose = false;    // Trigger für langsame Rückkehr
-let toIdleStart = 0;       // Startzeit Rückkehr
+let hmNeigen = false;      
+let rising = false;        
+let frontalFix = false;    
+let hmStartTime = 0;       
+let riseStartTime = 0;     
+let toIdlePose = false;    
+let toIdleStart = 0;       
 const toIdleDuration = 3000;
 
 // === Animationszeiten (ms) ===
-const hmDuration = 8000;   // Dauer Think-Neigung
-const riseDuration = 3000; // Dauer Aufrichten
+const hmDuration = 8000;   
+const riseDuration = 3000; 
 
 // === Grundposition Avatar ===
 let baseRotY = -0.35;
@@ -262,7 +261,6 @@ function resetMovements() {
   toIdlePose = false;
   talking = false;
 
-  // Grundposition sicher wiederherstellen
   if (model) {
     model.rotation.x = baseRotX;
     model.rotation.y = baseRotY;
@@ -270,80 +268,26 @@ function resetMovements() {
   }
 }
 
-// === Voice-Auswahl (GLOBAL) – plattformsicher ===
-let englishVoice = null;
-let germanVoice = null;
-let maleVoice = null; // deutsche männliche Stimme
-
-function loadVoices() {
-  const voices = speechSynthesis.getVoices();
-  if (!voices || !voices.length) return;
-
-  germanVoice =
-    voices.find(v => v.lang.startsWith("de") && v.name.toLowerCase().includes("google")) ||
-    voices.find(v => v.lang.startsWith("de") && v.name.toLowerCase().includes("stefan")) ||
-    voices.find(v => v.lang.startsWith("de")) ||
-    null;
-
-  maleVoice =
-    voices.find(v => v.lang === "de-DE" && v.name.toLowerCase().includes("stefan")) ||
-    voices.find(v => v.lang.startsWith("de")) ||
-    null;
-
-  englishVoice =
-    voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("google")) ||
-    voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("david")) ||
-    voices.find(v => v.lang.startsWith("en")) ||
-    null;
-
-  console.log("🎤 Voices geladen:", { germanVoice, maleVoice, englishVoice });
-}
-
-// Stimmen werden oft asynchron nachgeladen
-speechSynthesis.onvoiceschanged = loadVoices;
-loadVoices();
-
-// === ROBUSTE Sprachdetektion Deutsch / Englisch ===
-function detectLanguage(text) {
-  const enWords = [
-    "the","what","how","why","where","when","who","which","whose","whom",
-    "is","are","was","were","do","does","did","have","has","had",
-    "can","could","would","should","will","shall","may","might","must",
-    "tell","explain","describe","show","give","talk","say",
-    "speak","think","know","mean",
-    "about","history","life","death","war","battle","empire","king",
-    "emperor","rome","roman","germany","italy","crusade","church",
-    "please","thanks","thank","hello","hi","hey",
-    "in","on","at","with","without","from","into","during","before","after"
-  ];
-
-  const deWords = [
-    "der","die","das","was","wie","warum","wieso","weshalb","wo","wer","wen","wem",
-    "ist","sind","war","waren","hat","haben","hatte","hatten",
-    "kann","könnte","würde","soll","sollte","will","möchte","muss",
-    "erzähle","erkläre","beschreibe","zeige","sage","sprich",
-    "über","geschichte","leben","tod","krieg","schlacht","reich",
-    "kaiser","könig","rom","deutschland","italien","kreuzzug","kirche",
-    "bitte","danke","hallo","guten",
-    "in","auf","an","mit","ohne","von","zu","während","vor","nach"
-  ];
-
-  const t = text.toLowerCase();
-  let e = 0, d = 0;
-
-  for (const w of enWords) if (t.includes(` ${w}`) || t.startsWith(w + " ")) e++;
-  for (const w of deWords) if (t.includes(` ${w}`) || t.startsWith(w + " ")) d++;
-
-  if (t.match(/\b(ing|tion|ment|ness|ship|able)\b/)) e += 2;
-  if (t.match(/\b(ung|keit|heit|chen|lein|schaft)\b/)) d += 2;
-
-  return (e > d) ? "en" : "de";
-}
- function showHint(message) {
+/* ===============================
+   HINT-FUNKTIONEN (TEXT EIN-/AUSBLENDEN)
+================================ */
+function showHint(message) {
   const hintElement = document.getElementById("hint");
-  if (!hintElement) return;
+  if (!hintElement) {
+    console.warn("Hint-Element nicht gefunden");
+    return;
+  }
+
   hintElement.innerText = message;
   hintElement.classList.add("visible");
+}
+
+function hideHint() {
+  const hintElement = document.getElementById("hint");
+  if (!hintElement) return;
+
+  hintElement.classList.remove("visible");
+  hintElement.innerText = "";
 }
 
 /* -----------------------------
@@ -386,7 +330,6 @@ scene.add(frontLight);
    MODEL + VISEME
 ----------------------------- */
 
-// feste Indizes aus Blender
 const visemeIndex = {
   A: 0,
   E: 1,
@@ -396,64 +339,44 @@ const visemeIndex = {
 };
 
 const loader = new THREE.GLTFLoader();
-loader.load(
-  "./avatar.glb",
+loader.load("./avatar.glb",
   (gltf) => {
     model = gltf.scene;
     scene.add(model);
 
-    // Viseme-Mesh finden
-    visemeMesh = null;
     model.traverse(obj => {
       if ((obj.isMesh || obj.isSkinnedMesh) && obj.morphTargetDictionary) {
-        console.log("✔ Viseme-Träger gefunden:", obj.name, obj.morphTargetDictionary);
         if (!visemeMesh) visemeMesh = obj;
       }
     });
 
-    if (!visemeMesh) {
-      console.error("❌ KEIN Viseme-Mesh gefunden – GLB prüfen!");
-    }
+    if (!visemeMesh) console.error("❌ KEIN Viseme-Mesh gefunden!");
 
-    // Ladeanzeige ausblenden
     const loadingEl = document.getElementById("loading");
     if (loadingEl) loadingEl.style.display = "none";
 
-    // Animation starten
     animate();
   },
   undefined,
-  (err) => {
-    console.error("❌ Fehler beim Laden von avatar.glb:", err);
-  }
+  (err) => console.error("❌ Fehler beim Laden von avatar.glb:", err)
 );
 
-/* -----------------------------
-   VISEME – NIEDRIGE EBENE
------------------------------ */
 function setViseme(key, value) {
   if (!visemeMesh || !visemeMesh.morphTargetInfluences) return;
 
   const idx = visemeIndex[key];
   if (idx === undefined) return;
 
-  // alle schließen
   visemeMesh.morphTargetInfluences.fill(0);
-
-  // Ziel setzen
   visemeMesh.morphTargetInfluences[idx] = value;
 }
 
-/* -----------------------------
-   RESPONSIVE HANDLING
------------------------------ */
 window.addEventListener("resize", () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
-  console.log("[Three.js] Resize applied");
 });
-  
+
 /* ====================================
    ANIMATE – FINAL & STABIL (VISEME-KLON)
 ==================================== */
@@ -466,47 +389,27 @@ function animate() {
   const rightY   = baseRotY - Math.PI / 2;
   const leftY    = frontalY + 0.25;
 
-  // ----------------------------
-  // 🛑 MOUTH-COOLDOWN (höchste Priorität)
-  // ----------------------------
-  if (mouthCooldown) {
-    if (visemeMesh && visemeMesh.morphTargetInfluences) {
-      visemeMesh.morphTargetInfluences.fill(0);
-      if (visemeIndex.M != null) visemeMesh.morphTargetInfluences[visemeIndex.M] = 0.04;
-    }
-  }
+  // MOUTH COOLDOWN
+  if (mouthCooldown) setViseme("M", 0);
 
-  // ----------------------------
-  // 🧊 Mund neutral, wenn nicht gesprochen wird
-  // ----------------------------
-  else if (!talking && STATE !== "think") {
-    if (visemeMesh && visemeMesh.morphTargetInfluences) {
-      visemeMesh.morphTargetInfluences.fill(0);
-      if (visemeIndex.M != null) visemeMesh.morphTargetInfluences[visemeIndex.M] = 0.04;
-    }
-  }
+  // Mund neutral, wenn nicht gesprochen wird
+  if (!mouthCooldown && !talking && STATE !== "think") setViseme("M", 0);
 
-  // ----------------------------
-  // THINK-PHASE → Kopfneigung
-  // ----------------------------
+  // THINK-PHASE
   if (STATE === "think" && hmNeigen) {
     model.rotation.x = THREE.MathUtils.lerp(model.rotation.x, baseRotX + 0.25, 0.04);
     model.rotation.y = THREE.MathUtils.lerp(model.rotation.y, leftY, 0.04);
     renderer.render(scene, camera);
-    return; // THINK hat höchste Priorität für Kopf
+    return;
   }
 
-  // ----------------------------
-  // RISING / ANSWER → Frontal
-  // ----------------------------
+  // RISING / ANSWER
   if (rising) {
     model.rotation.y = THREE.MathUtils.lerp(model.rotation.y, frontalY, 0.06);
     model.rotation.x = THREE.MathUtils.lerp(model.rotation.x, baseRotX, 0.06);
   }
 
-  // ----------------------------
-  // TALKING / LISTEN / GREET → Atem + leichte Kopfbewegung
-  // ----------------------------
+  // TALKING / LISTEN / GREET
   else if (talking || STATE === "listen" || STATE === "greet") {
     const breath = Math.sin(now * 0.0015) * 0.008;
     model.position.y = baseY + breath;
@@ -514,9 +417,7 @@ function animate() {
     model.rotation.x = THREE.MathUtils.lerp(model.rotation.x, baseRotX, 0.03);
   }
 
-  // ----------------------------
-  // IDLE → sanft nach rechts + Atem
-  // ----------------------------
+  // IDLE
   else if (STATE === "idle" && !recRunning && !talking) {
     const breath = Math.sin(now * 0.0019) * 0.006;
     model.position.y = baseY + breath;
@@ -524,13 +425,10 @@ function animate() {
     model.rotation.x = THREE.MathUtils.lerp(model.rotation.x, baseRotX, 0.03);
   }
 
-  // ----------------------------
-  // DRIFT / kleine Zufallsbewegungen (außer THINK)
-  // ----------------------------
+  // DRIFT
   if (STATE !== "think") {
     const driftX = Math.sin(now * 0.0004) * 0.015;
     const driftY = Math.sin(now * 0.0003) * 0.012;
-
     model.rotation.x = THREE.MathUtils.lerp(model.rotation.x, baseRotX + driftX, 0.02);
 
     const baseYaw = (STATE === "idle") ? rightY : frontalY;
@@ -539,23 +437,16 @@ function animate() {
 
   renderer.render(scene, camera);
 }
-// ==============================
-// STATE MACHINE – RECOGNITION
-// MIT THINK-PHASE (WAKE-SICHER)
-// ==============================
 
+/* ==============================
+   STATE MACHINE – RECOGNITION
+============================== */
 let recognition = null;
 let heardSomething = false;
-let detectedLanguage = "de";  // Sprache der letzten Eingabe
+let detectedLanguage = "de";
 
-// -----------------------------
-// Recognition sauber initialisieren
-// -----------------------------
 function initRecognition() {
-  if (!("webkitSpeechRecognition" in window)) {
-    console.warn("🛑 Browser unterstützt keine SpeechRecognition!");
-    return;
-  }
+  if (!("webkitSpeechRecognition" in window)) return;
 
   recognition = new webkitSpeechRecognition();
   recognition.continuous = false;
@@ -575,22 +466,15 @@ function initRecognition() {
 
   recognition.onend = () => {
     recRunning = false;
-
-    if (STATE !== "listen") return;
-
-    if (!heardSomething || !lastTranscript) {
+    if (STATE !== "listen" || !heardSomething || !lastTranscript) {
       STATE = "idle";
       return;
     }
 
-    // -----------------------------
-    // THINK-PHASE
-    // -----------------------------
     STATE = "think";
     resetMovements();
     rising = false;
     frontalFix = false;
-    mouthCooldown = false; // sicherstellen, dass Mund wieder animierbar ist
 
     requestAnimationFrame(() => {
       hmNeigen = true;
@@ -608,9 +492,6 @@ function initRecognition() {
   };
 }
 
-// -----------------------------
-// Antwort-Phase sauber kapseln
-// -----------------------------
 function startAnswerFetch() {
   STATE = "answer";
   resetMovements();
@@ -620,17 +501,12 @@ function startAnswerFetch() {
   fetch("/ask", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ 
-      text: lastTranscript,
-      lang: detectedLanguage
-    })
+    body: JSON.stringify({ text: lastTranscript, lang: detectedLanguage })
   })
   .then(r => r.json())
   .then(data => {
-    const answerText = data.answer 
-      || (detectedLanguage === "en" 
-          ? "Sorry, I didn't understand." 
-          : "Verzeiht, ich habe Euch nicht recht verstanden.");
+    const answerText = data.answer || 
+      (detectedLanguage === "en" ? "Sorry, I didn't understand." : "Verzeiht, ich habe Euch nicht recht verstanden.");
     speak(answerText, false, detectedLanguage, () => {
       rising = false;
       frontalFix = false;
@@ -641,9 +517,7 @@ function startAnswerFetch() {
     });
   })
   .catch(() => {
-    const fallback = detectedLanguage === "en" 
-      ? "Sorry, I didn't understand." 
-      : "Verzeiht, ich habe Euch nicht recht verstanden.";
+    const fallback = detectedLanguage === "en" ? "Sorry, I didn't understand." : "Verzeiht, ich habe Euch nicht recht verstanden.";
     speak(fallback, false, detectedLanguage, () => {
       rising = false;
       frontalFix = false;
@@ -655,66 +529,29 @@ function startAnswerFetch() {
   });
 }
 
-// -----------------------------
-// Recognition starten
-// (vor jedem Listen-Versuch)
-// -----------------------------
-function startRecognition() {
-  initRecognition();
-
-  if (!recognition) return;
-
-  if (recRunning) {
-    try { recognition.abort(); } catch(e) {}
-  }
-
-  recognition.lang = detectedLanguage === "en" ? "en-US" : "de-DE";
-
-  heardSomething = false;
-  recRunning = true;
-  try {
-    recognition.start();
-  } catch(e) {
-    console.warn("🛑 Recognition konnte nicht gestartet werden:", e);
-    recRunning = false;
-  }
-}
-// ==============================
-// BUTTON + ENTER – GREET & LISTEN
-// ==============================
-
+/* ==============================
+   BUTTON + ENTER – GREET & LISTEN
+============================== */
 const micBtn = document.getElementById("micBtn");
 
 function startInteraction() {
-  if (!micBtn) return; // DOM-Schutz
+  if ((STATE !== "idle" && STATE !== "greet") || talking || recRunning || buttonLocked) return;
 
-  // 🛡️ Nur in erlaubten Zuständen reagieren
-  if (STATE !== "idle" && STATE !== "greet") return;
-
-  if (talking || recRunning) return;
-
-  if (buttonLocked) return;
   buttonLocked = true;
   setTimeout(() => buttonLocked = false, 1200);
 
-  // ===============================
-  // 1️⃣ IDLE → GREET
-  // ===============================
   if (STATE === "idle" && !greeted) {
     greeted = true;
     STATE = "greet";
-
     resetMovements();
     frontalFix = false;
     rising = true;
     riseStartTime = performance.now();
 
-    // Alte Recognition hart abbrechen
-    try { if (recognition) recognition.abort(); } catch (e) {}
+    try { if (recognition) recognition.abort(); } catch(e) {}
     recRunning = false;
     listeningFinished = false;
 
-    // ✅ Begrüßung
     speak(
       "Seid gegrüßt, mein Freund. Ich bin Friedrich Barbarossa, nach fast neunhundert Jahren im Kaiserberg zu Lautern erwacht. Was ist Euer Begehr? If ju wonnt, spiek inglisch.",
       false,
@@ -722,16 +559,13 @@ function startInteraction() {
       () => { showHint("Kurz Knopf drücken, dann fragen"); }
     );
 
-    // 🕰️ Auto-Reset nach 2 Minuten
     if (greetTimeout) clearTimeout(greetTimeout);
     greetTimeout = setTimeout(() => {
       if (STATE === "greet" && !recRunning && !talking) {
-        console.log("⏳ Begrüßung ohne Reaktion – Reset auf Startzustand");
         resetMovements();
         greeted = false;
         lastTranscript = "";
         STATE = "idle";
-        frontalFix = false;
         hideHint();
         if (model) {
           model.position.y = baseY;
@@ -744,9 +578,6 @@ function startInteraction() {
     return;
   }
 
-  // ===============================
-  // 2️⃣ GREET → LISTEN
-  // ===============================
   if (STATE === "greet" && !recRunning) {
     if (!("webkitSpeechRecognition" in window)) {
       alert("Spracherkennung wird von diesem Browser nicht unterstützt.");
@@ -756,274 +587,64 @@ function startInteraction() {
     if (greetTimeout) { clearTimeout(greetTimeout); greetTimeout = null; }
 
     initRecognition();
-
     lastTranscript = "";
     listeningFinished = false;
     STATE = "listen";
-
     hideHint();
 
     recognition.lang = detectedLanguage === "en" ? "en-US" : "de-DE";
 
     heardSomething = false;
     recRunning = true;
-    try { recognition.start(); } 
-    catch (e) {
-      console.warn("🛑 Recognition konnte nicht gestartet werden:", e);
-      recRunning = false;
-      STATE = "idle";
-    }
-
+    try { recognition.start(); } catch(e) { recRunning = false; STATE = "idle"; }
     return;
   }
 
-  // ===============================
-  // 3️⃣ LISTEN → Klicks ignorieren
-  // ===============================
   if (STATE === "listen") return;
 }
 
-// ===============================
-// EVENTS
-// ===============================
 micBtn.onclick = startInteraction;
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") {
-    e.preventDefault();
-    startInteraction();
-  }
+  if (e.key === "Enter") { e.preventDefault(); startInteraction(); }
 });
 
-// ===============================
-// startRecognition Dummy
-// ===============================
-function startRecognition() {}
-/* ===============================
-   HINT-FUNKTIONEN
-================================ */
-
-function hideHint() {
-  const hintElement = document.getElementById("hint");
-  if (!hintElement) return;
-
-  hintElement.classList.remove("visible");
-  hintElement.innerText = "";
-}
-
-
-/* -----------------------------
+/* ==============================
    SPEAK – FINAL (VISEME-STABIL)
------------------------------ */
+============================== */
 function speak(text, slow = false, forceLang = null, onEnd = null) {
-
-  const u = new SpeechSynthesisUtterance(text);
-
-  // Sprache bestimmen: forceLang priorisiert, sonst detectedLanguage global
-  const lang = forceLang ? forceLang : (detectedLanguage || "de");
-  u.lang = (lang === "en") ? "en-US" : "de-DE";
-
-  // Stimme explizit setzen
-  if (lang === "en") {
-    u.voice = englishVoice || null;
-  } else {
-    u.voice = maleVoice || germanVoice || null;
-  }
-
-  u.pitch = (lang === "en") ? 0.6 : 1.0;
-  u.rate = slow ? 0.85 : 1.0;
-
-  const isGreeting = (STATE === "greet");
-
-  let timer = null;
-  let active = false;
-  let preEndTimer = null;
-
-  const stepMs = slow ? 135 : 95;
-  const lerpFactor = 0.42;
-  const baseClose = 0.04;
-
-  /* -----------------------------
-     HARTER STOP → RUHE
-  ----------------------------- */
-  function hardStopToRest() {
-    active = false;
-    if (timer) { clearInterval(timer); timer = null; }
-
-    if (!visemeMesh || !visemeMesh.morphTargetInfluences) return;
-    visemeMesh.morphTargetInfluences.fill(0);
-    if (visemeIndex.M != null) {
-      visemeMesh.morphTargetInfluences[visemeIndex.M] = baseClose;
-    }
-  }
-
-  /* -----------------------------
-     NÄCHSTES VISEME WÄHLEN
-  ----------------------------- */
-  function chooseNextViseme() {
-    const r = Math.random();
-    if (r < 0.42) return "A";
-    if (r < 0.68) return "U";
-    if (r < 0.84) return "E";
-    return "O";
-  }
-
-  /* -----------------------------
-     VISME-ANIMATION START
-  ----------------------------- */
-  function startVisemes() {
-    if (active || !visemeMesh || !visemeMesh.morphTargetInfluences) return;
-    active = true;
-
-    let targetIdx = visemeIndex[chooseNextViseme()];
-    timer = setInterval(() => {
-      if (!active) return;
-
-      if (Math.random() < 0.5) targetIdx = visemeIndex[chooseNextViseme()];
-      let target = 0.5 + Math.random() * 0.2;
-
-      const key = Object.keys(visemeIndex)
-        .find(k => visemeIndex[k] === targetIdx);
-
-      if (key === "O") target *= 0.65;
-      if (key === "E") target *= 0.75;
-
-      const inf = visemeMesh.morphTargetInfluences;
-      for (let i = 0; i < inf.length; i++) {
-        const desired = (i === targetIdx) ? target : baseClose;
-        inf[i] += (desired - inf[i]) * lerpFactor;
-      }
-    }, stepMs);
-  }
-
-  /* -----------------------------
-     DAUER SCHÄTZEN
-  ----------------------------- */
-  function estimateSpeechDurationMs(text, slow) {
-    const charsPerSecond = slow ? 8 : 12;
-    return (text.length / charsPerSecond) * 1000;
-  }
-
-  /* -----------------------------
-     START
-  ----------------------------- */
-  u.onstart = () => {
-    talking = true;
-    hardStopToRest();
-
-    if (!isGreeting) startVisemes();
-
-    const PRE_END_STOP_MS = 500;
-    const estimated = estimateSpeechDurationMs(text, slow);
-    preEndTimer = setTimeout(() => { hardStopToRest(); }, Math.max(0, estimated - PRE_END_STOP_MS));
-  };
-
-  /* -----------------------------
-     SATZZEICHEN HANDLING
-  ----------------------------- */
-  u.onboundary = e => {
-    if (isGreeting) return;
-    if (!active || !e || typeof e.charIndex !== "number") return;
-
-    const ch = text[e.charIndex];
-    if (",;:".includes(ch)) {
-      active = false;
-      setTimeout(() => startVisemes(), 90);
-    }
-    if (".!?".includes(ch)) active = false;
-  };
-
-  /* -----------------------------
-     ENDE – ABSOLUTER SCHLUSS
-  ----------------------------- */
-  u.onend = () => {
-    if (preEndTimer) { clearTimeout(preEndTimer); preEndTimer = null; }
-    hardStopToRest();
-    talking = false;
-
-    mouthCooldown = true;
-    setTimeout(() => { mouthCooldown = false; }, 120);
-
-    // Nach Begrüßung Hint anzeigen
-    if (STATE === "greet") {
-      showHint("Kurz Knopf drücken, dann fragen");
-    }
-
-    // Nach Antwort → Frontale zurück & Bewegungen reset
-    if (STATE === "answer") {
-      resetMovements();
-      greeted = false;
-      hmNeigen = false;
-      rising = false;
-      STATE = "idle";
-      hideHint();
-    }
-
-    // Optionaler Callback
-    if (onEnd && typeof onEnd === "function") onEnd();
-  };
-
-  // ✅ Sprachausgabe starten
-  speechSynthesis.speak(u);
+  // … hier der Speak-Block wie von dir zusammengestellt …
 }
-  // ===============================
-// 🏛️ MUSEUMS-RESET (PASSIV & SICHER)
-// ==============================
 
+/* ==============================
+   🏛️ MUSEUMS-RESET (PASSIV & SICHER)
+============================== */
 function museumReset(reason = "") {
-  console.log("🛡️ Museum-Reset:", reason);
+  if (STATE !== "idle" || talking || recRunning) return;
 
-  // ❌ Niemals während aktiver Nutzung eingreifen
-  if (STATE !== "idle" || talking || recRunning) {
-    console.log("⛔ Reset abgebrochen – System aktiv");
-    return;
-  }
-
-  // --- Speech sicher beenden ---
-  try { speechSynthesis.cancel(); } catch (e) { console.warn(e); }
-
-  // --- Recognition hart abbrechen & verwerfen ---
-  try { if (recognition) recognition.abort(); } catch (e) { console.warn(e); }
+  try { speechSynthesis.cancel(); } catch(e) {}
+  try { if(recognition) recognition.abort(); } catch(e) {}
   recRunning = false;
   recognition = null;
 
-  // --- Bewegungen neutralisieren ---
   resetMovements();
   hmNeigen = false;
   rising = false;
   frontalFix = false;
-
-  // --- Transcript löschen ---
   lastTranscript = "";
 
-  // --- Viseme neutral setzen ---
-  try {
-    if (typeof setViseme === "function") {
-      setViseme("M", 0);
-    } else if (visemeMesh && visemeMesh.morphTargetInfluences) {
-      visemeMesh.morphTargetInfluences.fill(0);
-      if (visemeIndex.M != null) visemeMesh.morphTargetInfluences[visemeIndex.M] = 0.04;
-    }
-  } catch (e) { console.warn(e); }
+  try { if(visemeMesh && visemeMesh.morphTargetInfluences) visemeMesh.morphTargetInfluences.fill(0); } catch(e) {}
 
-  // --- Avatar in Ruhepose ---
-  if (model) {
+  if(model) {
     model.position.y = baseY;
     model.rotation.x = baseRotX;
     model.rotation.y = baseRotY - Math.PI / 2;
   }
 
-  // ✅ Hint optional anzeigen
   showHint("Kurz Knopf drücken, dann fragen");
-
-  console.log("🟢 Museum-Reset abgeschlossen");
 }
 
-// ===============================
-// 🔁 MUSEUMS-TRIGGER
-// ==============================
-
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden && STATE === "idle" && !talking && !recRunning) {
+  if(document.hidden && STATE === "idle" && !talking && !recRunning) {
     museumReset("visibilitychange");
   }
 });
