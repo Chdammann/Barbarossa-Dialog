@@ -872,58 +872,32 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
-/* ===============================
-   🎙️ VOICE SETUP (MUSEUMSSTABIL)
-=============================== */
-
-let maleVoice = null;
-
-function setMaleVoice() {
-  try {
-    const voices = speechSynthesis.getVoices();
-    if (!voices || !voices.length) return;
-
-    // bevorzugt: Microsoft Stefan (de-DE), sonst irgendeine de-DE Stimme
-    maleVoice =
-      voices.find(v => v.lang === "de-DE" && v.name.toLowerCase().includes("stefan")) ||
-      voices.find(v => v.lang === "de-DE") ||
-      null;
-
-    if (maleVoice) {
-      console.log("🎙️ Ausgewählte Stimme:", maleVoice);
-    } else {
-      console.warn("⚠️ Keine passende de-DE Stimme gefunden – Standardstimme wird genutzt");
-    }
-  } catch (e) {
-    console.warn("⚠️ setMaleVoice Fehler:", e);
-    maleVoice = null;
-  }
-}
-
-// Chrome/Edge: Stimmen werden oft asynchron geladen
-speechSynthesis.onvoiceschanged = setMaleVoice;
-
-// sofortiger Versuch (falls Stimmen schon da sind)
-setMaleVoice();
-
 /* -----------------------------
-   SPEAK – FINAL (VISEME-STABIL)
+   SPEAK – FINAL (VISEME-STABIL, EN TIEF)
 ----------------------------- */
 function speak(text, slow = false, forceLang = null, onEnd = null) {
 
-  const u = new SpeechSynthesisUtterance(text);
-
-  // ✅ Sprache bestimmen: forceLang priorisiert, sonst detectedLanguage global
   const lang = forceLang ? forceLang : detectedLanguage || "de";
+
+  // 🔹 Wenn englische Stimme noch nicht geladen, kurz warten
+  if (lang === "en" && !englishVoice) {
+    console.log("⚠️ Englische Stimme noch nicht geladen, warte 200ms");
+    setTimeout(() => speak(text, slow, forceLang, onEnd), 200);
+    return;
+  }
+
+  const u = new SpeechSynthesisUtterance(text);
   u.lang = (lang === "en") ? "en-US" : "de-DE";
 
-  // ✅ Stimme explizit setzen (Akzent-Fix)
+  // 🔹 Stimme explizit setzen
   if (lang === "en") {
-    u.voice = englishVoice || null; // nativ englisch, bevorzugt Google/David
+    u.voice = englishVoice;
+    u.pitch = 0.6;       // tiefer für weibliche Stimme
   } else if (lang === "de") {
-    u.voice = germanVoice || maleVoice || null; // deutsch stabil
+    u.voice = germanVoice || maleVoice || null;
+    u.pitch = 1.0;
   }
-  u.pitch = (lang === "en") ? 0.6 : 1.0;  // 0.0–2.0, Standard 1.0
+
   u.rate = slow ? 0.85 : 1.0;
 
   const isGreeting = (STATE === "greet");
@@ -1061,7 +1035,6 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
       hideHint();
     }
 
-    // ✅ Optionaler Callback
     if (onEnd && typeof onEnd === "function") {
       onEnd();
     }
