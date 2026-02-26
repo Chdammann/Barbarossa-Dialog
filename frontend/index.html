@@ -241,6 +241,27 @@ let buttonLocked = false;
 let mouthCooldown = false;
 let greetTimeout = null;
 
+  // === Voice-Auswahl (GLOBAL) ===
+let englishVoice = null;
+let germanVoice = null;
+
+function loadVoices() {
+  const voices = speechSynthesis.getVoices();
+
+  germanVoice =
+    voices.find(v => v.lang.startsWith("de") && v.name.toLowerCase().includes("google")) ||
+    voices.find(v => v.lang.startsWith("de"));
+
+  englishVoice =
+    voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("google")) ||
+    voices.find(v => v.lang.startsWith("en"));
+
+  console.log("🎤 Voices:", { germanVoice, englishVoice });
+}
+
+speechSynthesis.onvoiceschanged = loadVoices;
+loadVoices();
+
 // NEU: einfache Sprachdetektion Deutsch / Englisch
 function detectLanguage(text) {
   const en = ["the","what","how","why","where","when","who"];
@@ -859,15 +880,22 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
 
   const u = new SpeechSynthesisUtterance(text);
 
-  // ✅ Sprache wählen: forceLang priorisiert, sonst globale detectedLanguage
-  u.lang = forceLang
-    ? (forceLang === "en" ? "en-US" : "de-DE")
-    : (detectedLanguage === "en" ? "en-US" : "de-DE");
+  // ✅ Sprache bestimmen
+  const lang = forceLang ? forceLang : detectedLanguage;
+  u.lang = (lang === "en") ? "en-US" : "de-DE";
 
-  u.rate = slow ? 0.85 : 1.0;
-  if (typeof maleVoice !== "undefined" && maleVoice) {
+  // ✅ Stimme explizit setzen (Akzent-Fix!)
+  if (lang === "en" && englishVoice) {
+    u.voice = englishVoice;
+  }
+  else if (lang === "de" && germanVoice) {
+    u.voice = germanVoice;
+  }
+  else if (typeof maleVoice !== "undefined" && maleVoice) {
     u.voice = maleVoice;
   }
+
+  u.rate = slow ? 0.85 : 1.0;
 
   const isGreeting = (STATE === "greet");
 
@@ -949,7 +977,6 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
     hardStopToRest();
     startVisemes();
 
-    // Pre-End-Stop: Mund kurz vor Audioende schließen
     const PRE_END_STOP_MS = 500;
     const estimated = estimateSpeechDurationMs(text, slow);
 
@@ -989,34 +1016,27 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
     hardStopToRest();
     talking = false;
 
-    // Kurzer Mund-Cooldown
     mouthCooldown = true;
     setTimeout(() => { mouthCooldown = false; }, 120);
 
-    // ✅ Nach Begrüßung → Hinweis einblenden
     if (STATE === "greet") {
       showHint("Kurz Knopf drücken, dann fragen");
     }
 
-    // ✅ Nach Antwort → Reset aller Zustände
     if (STATE === "answer") {
       resetMovements();
       greeted = false;
       hmNeigen = false;
       rising = false;
       STATE = "idle";
-
-      // Hinweis nach Reset ggf. ausblenden
       hideHint();
     }
 
-    // ✅ Optionaler Callback nach Ende der Sprachausgabe
     if (onEnd && typeof onEnd === "function") {
       onEnd();
     }
   };
 
-  // Start der Sprachausgabe
   speechSynthesis.speak(u);
 }
 /* -----------------------------
