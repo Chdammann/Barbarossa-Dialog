@@ -244,6 +244,7 @@ let greetTimeout = null;
 // === Voice-Auswahl (GLOBAL) – plattformsicher ===
 let englishVoice = null;
 let germanVoice = null;
+let maleVoice = null; // deutsche männliche Stimme
 
 function loadVoices() {
   const voices = speechSynthesis.getVoices();
@@ -256,6 +257,12 @@ function loadVoices() {
     voices.find(v => v.lang.startsWith("de")) ||
     null;
 
+  // 🔹 Male Voice: bevorzugt Microsoft Stefan (de-DE), sonst irgendeine de-DE
+  maleVoice =
+    voices.find(v => v.lang === "de-DE" && v.name.toLowerCase().includes("stefan")) ||
+    voices.find(v => v.lang.startsWith("de")) ||
+    null;
+
   // 🔹 Englische Stimme bevorzugt Google / David, sonst irgendeine en-US
   englishVoice =
     voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("google")) ||
@@ -263,7 +270,7 @@ function loadVoices() {
     voices.find(v => v.lang.startsWith("en")) ||
     null;
 
-  console.log("🎤 Voices geladen:", { germanVoice, englishVoice });
+  console.log("🎤 Voices geladen:", { germanVoice, maleVoice, englishVoice });
 }
 
 // Stimmen werden oft asynchron nachgeladen
@@ -604,8 +611,8 @@ function initRecognition() {
     const res = e.results[0][0].transcript;
     if (!res || res.trim().length < 2) return;
 
-    lastTranscript = res;
-    detectedLanguage = detectLanguage(res); // Sprache erkennen
+    lastTranscript = res.trim();
+    detectedLanguage = detectLanguage(lastTranscript); // Sprache erkennen
     heardSomething = true;
   };
 
@@ -631,49 +638,44 @@ function initRecognition() {
       hmStartTime = performance.now();
     });
 
-    // Denkphrase
-    speak("Ähm … einen Moment bitte.", true);
+    // Denkphrase in aktueller Sprache
+    const thinkText = detectedLanguage === "en" ? "Uhm… one moment, please." : "Ähm … einen Moment bitte.";
+    speak(thinkText, true, detectedLanguage);
 
     /* ===============================
        FRAGE → SERVER → ANTWORT
        (erst NACH Think-Phase)
     =============================== */
-    fetch("/ask", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ 
-        text: lastTranscript,
-        lang: detectedLanguage // Sprache mitschicken
-      })
-    })
-    .then(r => r.json())
-    .then(data => {
+    const waitForThinkEnd = setInterval(() => {
+      if (!talking) {
+        clearInterval(waitForThinkEnd);
 
-      const waitForThinkEnd = setInterval(() => {
-        if (!talking) {
-          clearInterval(waitForThinkEnd);
+        STATE = "answer";
+        resetMovements();
 
-          STATE = "answer";
-          resetMovements();
+        rising = true;
+        riseStartTime = performance.now();
 
-          rising = true;
-          riseStartTime = performance.now();
-
-          // Antwort in erkannter Sprache – forceLang übergeben
+        // Antwort in erkannter Sprache – forceLang übergeben
+        fetch("/ask", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ 
+            text: lastTranscript,
+            lang: detectedLanguage
+          })
+        })
+        .then(r => r.json())
+        .then(data => {
+          if (!data.answer) data.answer = detectedLanguage === "en" ? "Sorry, I didn't understand." : "Verzeiht, ich habe Euch nicht recht verstanden.";
           speak(data.answer, false, detectedLanguage);
-        }
-      }, 120);
-
-    })
-    .catch(() => {
-      STATE = "answer";
-      resetMovements();
-      speak(
-        "Verzeiht, ich habe Euch nicht recht verstanden.",
-        false,
-        detectedLanguage
-      );
-    });
+        })
+        .catch(() => {
+          const fallback = detectedLanguage === "en" ? "Sorry, I didn't understand." : "Verzeiht, ich habe Euch nicht recht verstanden.";
+          speak(fallback, false, detectedLanguage);
+        });
+      }
+    }, 120);
   };
 }
 
@@ -685,7 +687,7 @@ function startRecognition() {
   // 🔄 immer neu initialisieren, damit Sprache zuverlässig gesetzt wird
   initRecognition();
 
-  if (recRunning) {
+  if (recRunning && recognition) {
     try { recognition.abort(); } catch(e) {}
   }
 
@@ -737,10 +739,11 @@ function startInteraction() {
     recRunning = false;
     listeningFinished = false;
 
+    // ✅ Begrüßung immer männlich Deutsch
     speak(
       "Seid gegrüßt, mein Freund. Ich bin Friedrich Barbarossa, nach fast neunhundert Jahren im Kaiserberg zu Lautern erwacht. Was ist Euer Begehr? If ju wonnt, spiek inglisch.",
       false,
-      "de", // Sprache nur für Begrüßung erzwingen
+      "de", // Sprache für Begrüßung erzwingen
       () => { showHint("Kurz Knopf drücken, dann fragen"); }
     );
 
@@ -755,7 +758,6 @@ function startInteraction() {
         lastTranscript = "";
         STATE = "idle";
 
-        // Hinweistext verstecken
         hideHint();
 
         if (model) {
@@ -778,7 +780,7 @@ function startInteraction() {
       return;
     }
 
-    // 🛑 Auto-Reset abbrechen, da Nutzer reagiert hat
+    // 🛑 Auto-Reset abbrechen
     if (greetTimeout) {
       clearTimeout(greetTimeout);
       greetTimeout = null;
@@ -790,17 +792,21 @@ function startInteraction() {
     listeningFinished = false;
     STATE = "listen";
 
-    // Hinweistext ausblenden, da Aufnahme startet
     hideHint();
 
+    // ✅ Sprache direkt aus detectedLanguage (Fallback Deutsch)
+    recognition.lang = detectedLanguage === "en" ? "en-US" : "de-DE";
+
+    heardSomething = false;
+    recRunning = true;
     try {
-      recognition.lang = detectedLanguage === "en" ? "en-US" : "de-DE"; // Dynamische Sprache
       recognition.start();
-      recRunning = true;
     } catch (e) {
+      console.warn("🛑 Recognition konnte nicht gestartet werden:", e);
       recRunning = false;
       STATE = "idle";
     }
+
     return;
   }
 
@@ -814,10 +820,8 @@ function startInteraction() {
    EVENTS
 =============================== */
 
-// 🖱️ Button
 micBtn.onclick = startInteraction;
 
-// ⌨️ Enter-Taste / externer Taster
 document.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
     e.preventDefault();
@@ -923,11 +927,11 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
   const lang = forceLang ? forceLang : (detectedLanguage || "de");
   u.lang = (lang === "en") ? "en-US" : "de-DE";
 
-  // ✅ Stimme explizit setzen, Priorität: forceLang
+  // ✅ Stimme explizit setzen: Deutsch = maleVoice, Englisch = englishVoice
   if (lang === "en") {
     u.voice = englishVoice || null; // nativ englisch
   } else if (lang === "de") {
-    u.voice = maleVoice || germanVoice || null; // deutsch stabil
+    u.voice = maleVoice || germanVoice || null; // deutsch immer männlich
   }
 
   // ✅ Pitch: Englisch tiefer, Deutsch normal
