@@ -923,7 +923,7 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
   } else if (lang === "de") {
     u.voice = germanVoice || maleVoice || null; // deutsch stabil
   }
-
+  u.pitch = (lang === "en") ? 0.6 : 1.0;  // 0.0–2.0, Standard 1.0
   u.rate = slow ? 0.85 : 1.0;
 
   const isGreeting = (STATE === "greet");
