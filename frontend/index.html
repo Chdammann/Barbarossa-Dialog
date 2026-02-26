@@ -643,18 +643,23 @@ function initRecognition() {
    (vor jedem Listen-Versuch)
 ----------------------------- */
 function startRecognition() {
-  if (!recognition) initRecognition();
+  // 🔄 immer neu initialisieren, damit Sprache zuverlässig gesetzt wird
+  initRecognition();
 
   if (recRunning) {
     try { recognition.abort(); } catch(e) {}
   }
 
-  // Sprache dynamisch nach letzter Erkennung setzen
   recognition.lang = detectedLanguage === "en" ? "en-US" : "de-DE";
 
   heardSomething = false;
   recRunning = true;
-  recognition.start();
+  try {
+    recognition.start();
+  } catch(e) {
+    console.warn("🛑 Recognition konnte nicht gestartet werden:", e);
+    recRunning = false;
+  }
 }
 /* -----------------------------
    BUTTON + ENTER – GREET & LISTEN
