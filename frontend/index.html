@@ -272,18 +272,58 @@ speechSynthesis.onvoiceschanged = loadVoices;
 // Sofortiger Versuch, falls Stimmen schon da sind
 loadVoices();
 
-// === NEU: einfache Sprachdetektion Deutsch / Englisch ===
+// === ROBUSTE Sprachdetektion Deutsch / Englisch (Museumstauglich) ===
 function detectLanguage(text) {
-  const en = ["the","what","how","why","where","when","who"];
-  const de = ["der","die","das","wie","warum","was","wo","wer"];
 
-  let e = 0, d = 0;
+  const enWords = [
+    // Fragewörter
+    "the","what","how","why","where","when","who","which","whose","whom",
+
+    // Hilfsverben
+    "is","are","was","were","do","does","did","have","has","had",
+    "can","could","would","should","will","shall","may","might","must",
+
+    // typische Satzstarter
+    "tell","explain","describe","show","give","talk","say",
+    "speak","think","know","mean",
+
+    // typische Inhaltswörter
+    "about","history","life","death","war","battle","empire","king",
+    "emperor","rome","roman","germany","italy","crusade","church",
+
+    // Höflichkeitsformen
+    "please","thanks","thank","hello","hi","hey",
+
+    // typische Präpositionen
+    "in","on","at","with","without","from","into","during","before","after"
+  ];
+
+  const deWords = [
+    "der","die","das","was","wie","warum","wieso","weshalb","wo","wer","wen","wem",
+    "ist","sind","war","waren","hat","haben","hatte","hatten",
+    "kann","könnte","würde","soll","sollte","will","möchte","muss",
+    "erzähle","erkläre","beschreibe","zeige","sage","sprich",
+    "über","geschichte","leben","tod","krieg","schlacht","reich",
+    "kaiser","könig","rom","deutschland","italien","kreuzzug","kirche",
+    "bitte","danke","hallo","guten",
+    "in","auf","an","mit","ohne","von","zu","während","vor","nach"
+  ];
+
   const t = text.toLowerCase();
 
-  en.forEach(w => { if (t.includes(w)) e++; });
-  de.forEach(w => { if (t.includes(w)) d++; });
+  let e = 0;
+  let d = 0;
 
-  return e > d ? "en" : "de";
+  for (const w of enWords) if (t.includes(` ${w}`) || t.startsWith(w + " ")) e++;
+  for (const w of deWords) if (t.includes(` ${w}`) || t.startsWith(w + " ")) d++;
+
+  // Bonus: typische englische Endungen
+  if (t.match(/\b(ing|tion|ment|ness|ship|able)\b/)) e += 2;
+
+  // Bonus: typische deutsche Endungen
+  if (t.match(/\b(ung|keit|heit|chen|lein|schaft)\b/)) d += 2;
+
+  return (e > d) ? "en" : "de";
 }
 // === Bewegungszustände ===
 let frontalFix = true;
