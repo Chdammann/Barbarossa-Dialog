@@ -913,12 +913,9 @@ document.addEventListener("visibilitychange", () => {
 });
 
 /* -----------------------------
-   SPEAK – FINAL (VISEME-STABIL, STABIL DE/EN)
+   SPEAK – FINAL (VISEME-STABIL)
 ----------------------------- */
 function speak(text, slow = false, forceLang = null, onEnd = null) {
-
-  // ✅ Stelle sicher, dass maleVoice geladen ist
-  if (!maleVoice) setMaleVoice();
 
   const u = new SpeechSynthesisUtterance(text);
 
@@ -928,9 +925,9 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
 
   // ✅ Stimme explizit setzen, Priorität: forceLang
   if (lang === "en") {
-    u.voice = englishVoice || null; // Englisch weiblich
+    u.voice = englishVoice || null; // nativ englisch
   } else if (lang === "de") {
-    u.voice = maleVoice || germanVoice || null; // Deutsch männlich stabil
+    u.voice = maleVoice || germanVoice || null; // deutsch stabil
   }
 
   // ✅ Pitch: Englisch tiefer, Deutsch normal
@@ -1081,7 +1078,6 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
   // ✅ Sprachausgabe starten
   speechSynthesis.speak(u);
 }
-  
 /* -----------------------------
    RESIZE
 ----------------------------- */
