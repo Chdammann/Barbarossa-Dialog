@@ -873,31 +873,25 @@ document.addEventListener("visibilitychange", () => {
 });
 
 /* -----------------------------
-   SPEAK – FINAL (VISEME-STABIL, EN TIEF)
+   SPEAK – FINAL (VISEME-STABIL)
 ----------------------------- */
 function speak(text, slow = false, forceLang = null, onEnd = null) {
 
-  const lang = forceLang ? forceLang : detectedLanguage || "de";
-
-  // 🔹 Wenn englische Stimme noch nicht geladen, kurz warten
-  if (lang === "en" && !englishVoice) {
-    console.log("⚠️ Englische Stimme noch nicht geladen, warte 200ms");
-    setTimeout(() => speak(text, slow, forceLang, onEnd), 200);
-    return;
-  }
-
   const u = new SpeechSynthesisUtterance(text);
+
+  // ✅ Sprache bestimmen: forceLang priorisiert, sonst detectedLanguage global
+  const lang = forceLang ? forceLang : (detectedLanguage || "de");
   u.lang = (lang === "en") ? "en-US" : "de-DE";
 
-  // 🔹 Stimme explizit setzen
+  // ✅ Stimme explizit setzen, Priorität: forceLang
   if (lang === "en") {
-    u.voice = englishVoice;
-    u.pitch = 0.6;       // tiefer für weibliche Stimme
+    u.voice = englishVoice || null; // nativ englisch
   } else if (lang === "de") {
-    u.voice = germanVoice || maleVoice || null;
-    u.pitch = 1.0;
+    u.voice = germanVoice || maleVoice || null; // deutsch stabil
   }
 
+  // ✅ Pitch: Englisch tiefer, Deutsch normal
+  u.pitch = (lang === "en") ? 0.6 : 1.0;  // 0.0–2.0
   u.rate = slow ? 0.85 : 1.0;
 
   const isGreeting = (STATE === "greet");
@@ -1035,6 +1029,7 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
       hideHint();
     }
 
+    // ✅ Optionaler Callback
     if (onEnd && typeof onEnd === "function") {
       onEnd();
     }
