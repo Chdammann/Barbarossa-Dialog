@@ -614,8 +614,8 @@ function initRecognition() {
           rising = true;
           riseStartTime = performance.now();
 
-          // 🗣️ Antwort in erkannter Sprache
-          speak(data.answer, detectedLanguage === "en");
+          // 🗣️ Antwort in erkannter Sprache – forceLang wird übergeben
+          speak(data.answer, false, detectedLanguage);
         }
       }, 120);
 
@@ -623,11 +623,16 @@ function initRecognition() {
     .catch(() => {
       STATE = "answer";
       resetMovements();
-      speak("Verzeiht, ich habe Euch nicht recht verstanden.", detectedLanguage === "en");
+      speak(
+        "Verzeiht, ich habe Euch nicht recht verstanden.",
+        false,
+        detectedLanguage
+      );
     });
 
   }; // ✅ recognition.onend geschlossen
 }    // ✅ initRecognition geschlossen
+  
 /* -----------------------------
    BUTTON + ENTER – GREET & LISTEN
 ----------------------------- */
