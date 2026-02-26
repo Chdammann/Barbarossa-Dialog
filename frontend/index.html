@@ -578,6 +578,172 @@ function animate() {
 }
 
 /* -----------------------------
+   SPEAK – FINAL (VISEME-STABIL)
+----------------------------- */
+function speak(text, slow = false, forceLang = null, onEnd = null) {
+
+  const u = new SpeechSynthesisUtterance(text);
+
+  // ✅ Sprache bestimmen: forceLang priorisiert, sonst detectedLanguage global
+  const lang = forceLang ? forceLang : (detectedLanguage || "de");
+  u.lang = (lang === "en") ? "en-US" : "de-DE";
+
+  // ✅ Stimme explizit setzen, Priorität: forceLang
+  if (lang === "en") {
+    u.voice = englishVoice || null; // nativ englisch
+  } else if (lang === "de") {
+    u.voice = germanVoice || maleVoice || null; // deutsch stabil
+  }
+
+  // ✅ Pitch: Englisch tiefer, Deutsch normal
+  u.pitch = (lang === "en") ? 0.6 : 1.0;  // 0.0–2.0
+  u.rate = slow ? 0.85 : 1.0;
+
+  const isGreeting = (STATE === "greet");
+
+  let timer = null;
+  let active = false;
+  let preEndTimer = null;
+
+  const stepMs = slow ? 135 : 95;
+  const lerpFactor = 0.42;
+  const baseClose = 0.04;
+
+  /* -----------------------------
+     HARTER STOP → RUHE
+  ----------------------------- */
+  function hardStopToRest() {
+    active = false;
+
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
+    }
+
+    if (!visemeMesh || !visemeMesh.morphTargetInfluences) return;
+
+    visemeMesh.morphTargetInfluences.fill(0);
+    visemeMesh.morphTargetInfluences[visemeIndex.M] = baseClose;
+  }
+
+  function chooseNextViseme() {
+    const r = Math.random();
+    if (r < 0.42) return "A";
+    if (r < 0.68) return "U";
+    if (r < 0.84) return "E";
+    return "O";
+  }
+
+  function startVisemes() {
+    if (active || !visemeMesh || !visemeMesh.morphTargetInfluences) return;
+
+    active = true;
+    let targetIdx = visemeIndex[chooseNextViseme()];
+
+    timer = setInterval(() => {
+      if (!active) return;
+
+      if (Math.random() < 0.5) {
+        targetIdx = visemeIndex[chooseNextViseme()];
+      }
+
+      let target = 0.5 + Math.random() * 0.2;
+
+      const key = Object.keys(visemeIndex)
+        .find(k => visemeIndex[k] === targetIdx);
+
+      if (key === "O") target *= 0.65;
+      if (key === "E") target *= 0.75;
+
+      const inf = visemeMesh.morphTargetInfluences;
+      for (let i = 0; i < inf.length; i++) {
+        const desired = (i === targetIdx) ? target : baseClose;
+        inf[i] += (desired - inf[i]) * lerpFactor;
+      }
+    }, stepMs);
+  }
+
+  /* -----------------------------
+     GROBE DAUER-SCHÄTZUNG
+  ----------------------------- */
+  function estimateSpeechDurationMs(text, slow) {
+    const charsPerSecond = slow ? 8 : 12;
+    return (text.length / charsPerSecond) * 1000;
+  }
+
+  /* -----------------------------
+     START
+  ----------------------------- */
+  u.onstart = () => {
+    talking = true;
+    hardStopToRest();
+    startVisemes();
+
+    const PRE_END_STOP_MS = 500;
+    const estimated = estimateSpeechDurationMs(text, slow);
+
+    preEndTimer = setTimeout(() => {
+      hardStopToRest();
+    }, Math.max(0, estimated - PRE_END_STOP_MS));
+  };
+
+  /* -----------------------------
+     SATZZEICHEN
+  ----------------------------- */
+  u.onboundary = e => {
+    if (isGreeting) return;
+    if (!active || !e || typeof e.charIndex !== "number") return;
+
+    const ch = text[e.charIndex];
+
+    if (",;:".includes(ch)) {
+      active = false;
+      setTimeout(() => startVisemes(), 90);
+    }
+
+    if (".!?".includes(ch)) {
+      active = false;
+    }
+  };
+
+  /* -----------------------------
+     ENDE – ABSOLUTER SCHLUSS
+  ----------------------------- */
+  u.onend = () => {
+    if (preEndTimer) {
+      clearTimeout(preEndTimer);
+      preEndTimer = null;
+    }
+
+    hardStopToRest();
+    talking = false;
+
+    mouthCooldown = true;
+    setTimeout(() => { mouthCooldown = false; }, 120);
+
+    if (STATE === "greet") {
+      showHint("Kurz Knopf drücken, dann fragen");
+    }
+
+    if (STATE === "answer") {
+      resetMovements();
+      greeted = false;
+      hmNeigen = false;
+      rising = false;
+      STATE = "idle";
+      hideHint();
+    }
+
+    // ✅ Optionaler Callback
+    if (onEnd && typeof onEnd === "function") {
+      onEnd();
+    }
+  };
+
+  // ✅ Sprachausgabe starten
+  speechSynthesis.speak(u);
+}
+/* -----------------------------
    STATE MACHINE – RECOGNITION
    MIT THINK-PHASE (WAKE-SICHER)
 ----------------------------- */
@@ -912,172 +1078,6 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
-/* -----------------------------
-   SPEAK – FINAL (VISEME-STABIL)
------------------------------ */
-function speak(text, slow = false, forceLang = null, onEnd = null) {
-
-  const u = new SpeechSynthesisUtterance(text);
-
-  // ✅ Sprache bestimmen: forceLang priorisiert, sonst detectedLanguage global
-  const lang = forceLang ? forceLang : (detectedLanguage || "de");
-  u.lang = (lang === "en") ? "en-US" : "de-DE";
-
-  // ✅ Stimme explizit setzen, Priorität: forceLang
-  if (lang === "en") {
-    u.voice = englishVoice || null; // nativ englisch
-  } else if (lang === "de") {
-    u.voice = germanVoice || maleVoice || null; // deutsch stabil
-  }
-
-  // ✅ Pitch: Englisch tiefer, Deutsch normal
-  u.pitch = (lang === "en") ? 0.6 : 1.0;  // 0.0–2.0
-  u.rate = slow ? 0.85 : 1.0;
-
-  const isGreeting = (STATE === "greet");
-
-  let timer = null;
-  let active = false;
-  let preEndTimer = null;
-
-  const stepMs = slow ? 135 : 95;
-  const lerpFactor = 0.42;
-  const baseClose = 0.04;
-
-  /* -----------------------------
-     HARTER STOP → RUHE
-  ----------------------------- */
-  function hardStopToRest() {
-    active = false;
-
-    if (timer) {
-      clearInterval(timer);
-      timer = null;
-    }
-
-    if (!visemeMesh || !visemeMesh.morphTargetInfluences) return;
-
-    visemeMesh.morphTargetInfluences.fill(0);
-    visemeMesh.morphTargetInfluences[visemeIndex.M] = baseClose;
-  }
-
-  function chooseNextViseme() {
-    const r = Math.random();
-    if (r < 0.42) return "A";
-    if (r < 0.68) return "U";
-    if (r < 0.84) return "E";
-    return "O";
-  }
-
-  function startVisemes() {
-    if (active || !visemeMesh || !visemeMesh.morphTargetInfluences) return;
-
-    active = true;
-    let targetIdx = visemeIndex[chooseNextViseme()];
-
-    timer = setInterval(() => {
-      if (!active) return;
-
-      if (Math.random() < 0.5) {
-        targetIdx = visemeIndex[chooseNextViseme()];
-      }
-
-      let target = 0.5 + Math.random() * 0.2;
-
-      const key = Object.keys(visemeIndex)
-        .find(k => visemeIndex[k] === targetIdx);
-
-      if (key === "O") target *= 0.65;
-      if (key === "E") target *= 0.75;
-
-      const inf = visemeMesh.morphTargetInfluences;
-      for (let i = 0; i < inf.length; i++) {
-        const desired = (i === targetIdx) ? target : baseClose;
-        inf[i] += (desired - inf[i]) * lerpFactor;
-      }
-    }, stepMs);
-  }
-
-  /* -----------------------------
-     GROBE DAUER-SCHÄTZUNG
-  ----------------------------- */
-  function estimateSpeechDurationMs(text, slow) {
-    const charsPerSecond = slow ? 8 : 12;
-    return (text.length / charsPerSecond) * 1000;
-  }
-
-  /* -----------------------------
-     START
-  ----------------------------- */
-  u.onstart = () => {
-    talking = true;
-    hardStopToRest();
-    startVisemes();
-
-    const PRE_END_STOP_MS = 500;
-    const estimated = estimateSpeechDurationMs(text, slow);
-
-    preEndTimer = setTimeout(() => {
-      hardStopToRest();
-    }, Math.max(0, estimated - PRE_END_STOP_MS));
-  };
-
-  /* -----------------------------
-     SATZZEICHEN
-  ----------------------------- */
-  u.onboundary = e => {
-    if (isGreeting) return;
-    if (!active || !e || typeof e.charIndex !== "number") return;
-
-    const ch = text[e.charIndex];
-
-    if (",;:".includes(ch)) {
-      active = false;
-      setTimeout(() => startVisemes(), 90);
-    }
-
-    if (".!?".includes(ch)) {
-      active = false;
-    }
-  };
-
-  /* -----------------------------
-     ENDE – ABSOLUTER SCHLUSS
-  ----------------------------- */
-  u.onend = () => {
-    if (preEndTimer) {
-      clearTimeout(preEndTimer);
-      preEndTimer = null;
-    }
-
-    hardStopToRest();
-    talking = false;
-
-    mouthCooldown = true;
-    setTimeout(() => { mouthCooldown = false; }, 120);
-
-    if (STATE === "greet") {
-      showHint("Kurz Knopf drücken, dann fragen");
-    }
-
-    if (STATE === "answer") {
-      resetMovements();
-      greeted = false;
-      hmNeigen = false;
-      rising = false;
-      STATE = "idle";
-      hideHint();
-    }
-
-    // ✅ Optionaler Callback
-    if (onEnd && typeof onEnd === "function") {
-      onEnd();
-    }
-  };
-
-  // ✅ Sprachausgabe starten
-  speechSynthesis.speak(u);
-}
 /* -----------------------------
    RESIZE
 ----------------------------- */
