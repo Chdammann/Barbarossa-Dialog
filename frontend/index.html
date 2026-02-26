@@ -241,26 +241,35 @@ let buttonLocked = false;
 let mouthCooldown = false;
 let greetTimeout = null;
 
-// === Voice-Auswahl (GLOBAL) ===
+// === Voice-Auswahl (GLOBAL) – plattformsicher ===
 let englishVoice = null;
 let germanVoice = null;
 
 function loadVoices() {
   const voices = speechSynthesis.getVoices();
+  if (!voices || !voices.length) return;
 
+  // 🔹 Deutsche Stimme bevorzugt Google / Stefan, sonst irgendeine de-DE
   germanVoice =
     voices.find(v => v.lang.startsWith("de") && v.name.toLowerCase().includes("google")) ||
-    voices.find(v => v.lang.startsWith("de"));
+    voices.find(v => v.lang.startsWith("de") && v.name.toLowerCase().includes("stefan")) ||
+    voices.find(v => v.lang.startsWith("de")) ||
+    null;
 
+  // 🔹 Englische Stimme bevorzugt Google / David, sonst irgendeine en-US
   englishVoice =
     voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("google")) ||
-    voices.find(v => v.lang.startsWith("en"));
+    voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("david")) ||
+    voices.find(v => v.lang.startsWith("en")) ||
+    null;
 
   console.log("🎤 Voices geladen:", { germanVoice, englishVoice });
 }
 
-// Trigger, wenn Browser die Stimmen später nachlädt
+// Stimmen werden oft asynchron nachgeladen
 speechSynthesis.onvoiceschanged = loadVoices;
+
+// Sofortiger Versuch, falls Stimmen schon da sind
 loadVoices();
 
 // === NEU: einfache Sprachdetektion Deutsch / Englisch ===
@@ -893,6 +902,7 @@ speechSynthesis.onvoiceschanged = setMaleVoice;
 
 // sofortiger Versuch (falls Stimmen schon da sind)
 setMaleVoice();
+
 /* -----------------------------
    SPEAK – FINAL (VISEME-STABIL)
 ----------------------------- */
@@ -905,12 +915,10 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
   u.lang = (lang === "en") ? "en-US" : "de-DE";
 
   // ✅ Stimme explizit setzen (Akzent-Fix)
-  if (lang === "en" && englishVoice) {
-    u.voice = englishVoice;
-  } else if (lang === "de" && germanVoice) {
-    u.voice = germanVoice;
-  } else if (typeof maleVoice !== "undefined" && maleVoice) {
-    u.voice = maleVoice;
+  if (lang === "en") {
+    u.voice = englishVoice || null; // nativ englisch, bevorzugt Google/David
+  } else if (lang === "de") {
+    u.voice = germanVoice || maleVoice || null; // deutsch stabil
   }
 
   u.rate = slow ? 0.85 : 1.0;
