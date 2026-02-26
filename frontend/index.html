@@ -235,12 +235,13 @@ let buttonLocked = false;
 let mouthCooldown = false;
 let greetTimeout = null;
 
-// === Bewegungsflags (für Animate / State-Machine) ===
+// === Bewegungsflags (für Animate / State-Machine) + Grundposition ===
 let hmNeigen = false;      // Kopfneigung (Think-Phase)
 let rising = false;        // Aufrichten (Antwort-Phase)
 let frontalFix = false;    // true = frontal fixiert, false = frei
 let hmStartTime = 0;       // Startzeit Kopfneigung
 let riseStartTime = 0;     // Startzeit Aufrichten
+
 let toIdlePose = false;    // Trigger für langsame Rückkehr
 let toIdleStart = 0;       // Startzeit Rückkehr
 const toIdleDuration = 3000;
@@ -261,7 +262,7 @@ function resetMovements() {
   toIdlePose = false;
   talking = false;
 
-  // Grundposition wiederherstellen
+  // Grundposition sicher wiederherstellen
   if (model) {
     model.rotation.x = baseRotX;
     model.rotation.y = baseRotY;
@@ -337,47 +338,6 @@ function detectLanguage(text) {
   if (t.match(/\b(ung|keit|heit|chen|lein|schaft)\b/)) d += 2;
 
   return (e > d) ? "en" : "de";
-}
-// ==============================
-// BEWEGUNGSZUSTÄNDE & GRUNDPOSITION
-// ==============================
-
-// Kopf- / Körperbewegungen
-let frontalFix = false;    // true = frontal fixiert, false = frei
-let hmNeigen = false;      // Kopfneigung (Think-Phase)
-let rising = false;        // Aufrichten (Antwort-Phase)
-let hmStartTime = 0;       // Startzeit Kopfneigung
-let riseStartTime = 0;     // Startzeit Aufrichten
-
-// Rückkehr in Ruhepose (Trigger)
-let toIdlePose = false;
-let toIdleStart = 0;
-const toIdleDuration = 3000; // Dauer der langsamen Rückkehr in ms
-
-// Animationszeiten (ms)
-const hmDuration = 8000;   // Dauer Think-Neigung
-const riseDuration = 3000; // Dauer Aufrichten
-
-// Grundposition Avatar
-let baseRotY = -0.35;
-let baseRotX = 0.25;
-let baseY = 0;
-
-// ==============================
-// RESET ALLER BEWEGUNGEN (hart & eindeutig)
-// ==============================
-function resetMovements() {
-  hmNeigen = false;
-  rising = false;
-  toIdlePose = false;
-  talking = false;
-
-  // Grundposition sicher wiederherstellen
-  if (model) {
-    model.rotation.x = baseRotX;
-    model.rotation.y = baseRotY;
-    model.position.y = baseY;
-  }
 }
   // ===============================
 // HINT-FUNKTIONEN (TEXT EIN-/AUSBLENDEN)
