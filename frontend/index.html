@@ -536,7 +536,7 @@ function animate() {
 
 let recognition = null;
 let heardSomething = false;
-let detectedLanguage = "de";  // NEU: Sprache der letzten Eingabe
+let detectedLanguage = "de";  // Sprache der letzten Eingabe
 
 /* -----------------------------
    Recognition sauber initialisieren
@@ -545,7 +545,6 @@ function initRecognition() {
   if (!("webkitSpeechRecognition" in window)) return;
 
   recognition = new webkitSpeechRecognition();
-  recognition.lang = "de-DE";
   recognition.continuous = false;
   recognition.interimResults = false;
 
@@ -558,14 +557,14 @@ function initRecognition() {
     if (!res || res.trim().length < 2) return;
 
     lastTranscript = res;
-    detectedLanguage = detectLanguage(res); // NEU: Sprache erkennen
+    detectedLanguage = detectLanguage(res); // Sprache erkennen
     heardSomething = true;
   };
 
   recognition.onend = () => {
     recRunning = false;
 
-    // ❗ Kein Think-Phase-Trigger, wenn nicht wirklich gehört wurde
+    // Kein Think-Phase-Trigger, wenn nichts gehört wurde
     if (STATE !== "listen") return;
     if (!heardSomething || !lastTranscript) {
       STATE = "idle";
@@ -575,30 +574,28 @@ function initRecognition() {
     /* ===============================
        THINK-PHASE
     =============================== */
-
     STATE = "think";
     resetMovements();
 
-    // 🧠 Think-Bewegung einen Frame verzögert setzen
+    // Think-Bewegung einen Frame verzögert setzen
     requestAnimationFrame(() => {
       hmNeigen = true;
       hmStartTime = performance.now();
     });
 
-    // 🗣️ Denkphrase
+    // Denkphrase
     speak("Ähm … einen Moment bitte.", true);
 
     /* ===============================
        FRAGE → SERVER → ANTWORT
        (erst NACH Think-Phase)
     =============================== */
-
     fetch("/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ 
         text: lastTranscript,
-        lang: detectedLanguage   // NEU: Sprache mitschicken
+        lang: detectedLanguage // Sprache mitschicken
       })
     })
     .then(r => r.json())
@@ -614,7 +611,7 @@ function initRecognition() {
           rising = true;
           riseStartTime = performance.now();
 
-          // 🗣️ Antwort in erkannter Sprache – forceLang wird übergeben
+          // Antwort in erkannter Sprache – forceLang übergeben
           speak(data.answer, false, detectedLanguage);
         }
       }, 120);
@@ -629,10 +626,27 @@ function initRecognition() {
         detectedLanguage
       );
     });
+  };
+}
 
-  }; // ✅ recognition.onend geschlossen
-}    // ✅ initRecognition geschlossen
-  
+/* -----------------------------
+   Recognition starten
+   (vor jedem Listen-Versuch)
+----------------------------- */
+function startRecognition() {
+  if (!recognition) initRecognition();
+
+  if (recRunning) {
+    try { recognition.abort(); } catch(e) {}
+  }
+
+  // Sprache dynamisch nach letzter Erkennung setzen
+  recognition.lang = detectedLanguage === "en" ? "en-US" : "de-DE";
+
+  heardSomething = false;
+  recRunning = true;
+  recognition.start();
+}
 /* -----------------------------
    BUTTON + ENTER – GREET & LISTEN
 ----------------------------- */
@@ -652,58 +666,58 @@ function startInteraction() {
   buttonLocked = true;
   setTimeout(() => buttonLocked = false, 400);
 
-/* ===============================
-     1️⃣ IDLE → GREET
+  /* ===============================
+       1️⃣ IDLE → GREET
   =============================== */
-if (STATE === "idle" && !greeted) {
-  greeted = true;
-  STATE = "greet";
+  if (STATE === "idle" && !greeted) {
+    greeted = true;
+    STATE = "greet";
 
-  resetMovements();
+    resetMovements();
 
-  frontalFix = false;
-  rising = true;
-  riseStartTime = performance.now();
+    frontalFix = false;
+    rising = true;
+    riseStartTime = performance.now();
 
-  // 🔁 Alte Recognition hart verwerfen
-  try { if (recognition) recognition.abort(); } catch (e) {}
-  recRunning = false;
-  listeningFinished = false;
+    // 🔁 Alte Recognition hart verwerfen
+    try { if (recognition) recognition.abort(); } catch (e) {}
+    recRunning = false;
+    listeningFinished = false;
 
-speak(
-  "Seid gegrüßt, mein Freund. Ich bin Friedrich Barbarossa, nach fast neunhundert Jahren im Kaiserberg zu Lautern erwacht. Was ist Euer Begehr? If ju wonnt, spiek inglisch.",
-  false,
-  "de", // Sprache nur für Begrüßung erzwingen
-  () => { showHint("Kurz Knopf drücken, dann fragen"); }
-);
+    speak(
+      "Seid gegrüßt, mein Freund. Ich bin Friedrich Barbarossa, nach fast neunhundert Jahren im Kaiserberg zu Lautern erwacht. Was ist Euer Begehr? If ju wonnt, spiek inglisch.",
+      false,
+      "de", // Sprache nur für Begrüßung erzwingen
+      () => { showHint("Kurz Knopf drücken, dann fragen"); }
+    );
 
-  // 🕰️ Auto-Reset: wenn 2 Minuten keine Frage kommt → zurück in Startzustand
-  if (greetTimeout) clearTimeout(greetTimeout);
-  greetTimeout = setTimeout(() => {
-    if (STATE === "greet" && !recRunning && !talking) {
-      console.log("⏳ Begrüßung ohne Reaktion – Reset auf Startzustand");
+    // 🕰️ Auto-Reset: wenn 2 Minuten keine Frage kommt → zurück in Startzustand
+    if (greetTimeout) clearTimeout(greetTimeout);
+    greetTimeout = setTimeout(() => {
+      if (STATE === "greet" && !recRunning && !talking) {
+        console.log("⏳ Begrüßung ohne Reaktion – Reset auf Startzustand");
 
-      resetMovements();
-      greeted = false;
-      lastTranscript = "";
-      STATE = "idle";
+        resetMovements();
+        greeted = false;
+        lastTranscript = "";
+        STATE = "idle";
 
-      // Hinweistext verstecken
-      hideHint();
+        // Hinweistext verstecken
+        hideHint();
 
-      if (model) {
-        model.position.y = baseY;
-        model.rotation.x = baseRotX;
-        model.rotation.y = baseRotY - Math.PI / 2;
+        if (model) {
+          model.position.y = baseY;
+          model.rotation.x = baseRotX;
+          model.rotation.y = baseRotY - Math.PI / 2;
+        }
       }
-    }
-  }, 120000); // 2 Minuten
+    }, 120000); // 2 Minuten
 
-  return;
-}
+    return;
+  }
 
   /* ===============================
-     2️⃣ GREET → LISTEN
+       2️⃣ GREET → LISTEN
   =============================== */
   if (STATE === "greet" && !recRunning) {
     if (!("webkitSpeechRecognition" in window)) {
@@ -727,6 +741,7 @@ speak(
     hideHint();
 
     try {
+      recognition.lang = detectedLanguage === "en" ? "en-US" : "de-DE"; // Dynamische Sprache
       recognition.start();
       recRunning = true;
     } catch (e) {
@@ -737,14 +752,14 @@ speak(
   }
 
   /* ===============================
-     3️⃣ LISTEN (Klicks werden ignoriert)
+       3️⃣ LISTEN (Klicks werden ignoriert)
   =============================== */
   if (STATE === "listen") return;
 }
 
 /* ===============================
    EVENTS
-================================ */
+=============================== */
 
 // 🖱️ Button
 micBtn.onclick = startInteraction;
@@ -756,7 +771,6 @@ document.addEventListener("keydown", (e) => {
     startInteraction();
   }
 });
-
 
 /* ===============================
    RECOGNITION START (Dummy)
@@ -846,9 +860,9 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
-  /* ===============================
+/* ===============================
    🎙️ VOICE SETUP (MUSEUMSSTABIL)
-================================ */
+=============================== */
 
 let maleVoice = null;
 
@@ -879,7 +893,6 @@ speechSynthesis.onvoiceschanged = setMaleVoice;
 
 // sofortiger Versuch (falls Stimmen schon da sind)
 setMaleVoice();
-  
 /* -----------------------------
    SPEAK – FINAL (VISEME-STABIL)
 ----------------------------- */
