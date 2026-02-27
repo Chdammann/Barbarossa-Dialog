@@ -348,6 +348,64 @@ function resetMovements() {
   rising = false;
   toIdlePose = false;
 }
+
+  // === ROBUSTE Sprachdetektion Deutsch / Englisch (Museumstauglich) – FIXED v2 ===
+function detectLanguage(text) {
+  const t0 = String(text || "").trim();
+  if (!t0) return "de";
+
+  const t = t0.toLowerCase();
+
+  // Harte DE-Indikatoren
+  if (/[äöüß]/i.test(t0)) return "de";
+
+  // Harte EN-Indikatoren
+  if (/\b(what|why|where|when|who|which|how|please)\b/.test(t)) return "en";
+
+  const tokens = t.split(/[^a-zA-Zäöüß]+/).filter(Boolean);
+
+  const enWords = new Set([
+    "the","a","an","and","or","but",
+    "is","are","was","were","do","does","did",
+    "have","has","had","can","could","would","should","will","shall","may","might","must",
+    "tell","explain","describe","show","give","talk","say","speak","think","know","mean",
+    "about","history","life","death","war","battle","empire","king","emperor","rome","roman",
+    "germany","italy","crusade","church",
+    "thanks","thank","hello","hi","hey"
+  ]);
+
+  const deWords = new Set([
+    "der","die","das","und","oder","aber",
+    "ist","sind","war","waren",
+    "habe","hast","hat","haben","habt","hatte","hatten",
+    "kann","könnte","würde","soll","sollte","will","möchte","muss","müssen",
+    "erzähle","erkläre","beschreibe","zeige","sage","sprich",
+    "über","geschichte","leben","tod","krieg","schlacht","reich",
+    "kaiser","könig","rom","deutschland","italien","kreuzzug","kirche",
+    "bitte","danke","hallo","guten"
+  ]);
+
+  let e = 0;
+  let d = 0;
+
+  for (const w of tokens) {
+    if (enWords.has(w)) e++;
+    if (deWords.has(w)) d++;
+  }
+
+  if (/\b(ing|tion|ment|ness|ship|able)\b/.test(t)) e += 3;
+  if (/\b(ung|keit|heit|chen|lein|schaft)\b/.test(t)) d += 3;
+  if (/\b(i'm|you're|we're|they're|don't|can't|won't|it's)\b/.test(t)) e += 4;
+
+  if (e > d) return "en";
+  if (d > e) return "de";
+
+  // Tie-breaker: ASCII-only → eher EN
+  const asciiOnly = /^[a-z0-9\s'".,!?-]+$/i.test(t0);
+  if (asciiOnly) return "en";
+
+  return "de";
+}
  // ===============================
 // HINT-FUNKTIONEN (TEXT EIN-/AUSBLENDEN) – FIXED
 // ===============================
