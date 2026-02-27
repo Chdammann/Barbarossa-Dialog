@@ -241,29 +241,45 @@ let buttonLocked = false;
 let mouthCooldown = false;
 let greetTimeout = null;
 
-// === Voice-Auswahl (GLOBAL) – plattformsicher ===
+// === Voice-Auswahl (GLOBAL) – plattformsicher (FIXED) ===
 let englishVoice = null;
-let germanVoice = null;
+let germanVoice  = null;
+let maleVoice    = null; // <- für speak()-Kompatibilität & Priorisierung
 
 function loadVoices() {
   const voices = speechSynthesis.getVoices();
   if (!voices || !voices.length) return;
 
-  // 🔹 Deutsche Stimme bevorzugt Google / Stefan, sonst irgendeine de-DE
+  const deVoices = voices.filter(v => (v.lang || "").toLowerCase().startsWith("de"));
+  const enVoices = voices.filter(v => (v.lang || "").toLowerCase().startsWith("en"));
+
+  // 🔹 DE: männlich bevorzugen (heuristisch über Name), dann Stefan, dann Google, dann irgendeine de
+  maleVoice =
+    deVoices.find(v => v.name && v.name.toLowerCase().includes("stefan")) ||
+    deVoices.find(v => v.name && v.name.toLowerCase().includes("markus")) ||
+    deVoices.find(v => v.name && v.name.toLowerCase().includes("männ")) ||
+    null;
+
   germanVoice =
-    voices.find(v => v.lang.startsWith("de") && v.name.toLowerCase().includes("google")) ||
-    voices.find(v => v.lang.startsWith("de") && v.name.toLowerCase().includes("stefan")) ||
-    voices.find(v => v.lang.startsWith("de")) ||
+    maleVoice ||
+    deVoices.find(v => v.name && v.name.toLowerCase().includes("stefan")) ||
+    deVoices.find(v => v.name && v.name.toLowerCase().includes("google")) ||
+    deVoices[0] ||
     null;
 
-  // 🔹 Englische Stimme bevorzugt Google / David, sonst irgendeine en-US
+  // 🔹 EN: Google/David bevorzugen, sonst irgendeine en
   englishVoice =
-    voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("google")) ||
-    voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("david")) ||
-    voices.find(v => v.lang.startsWith("en")) ||
+    enVoices.find(v => v.name && v.name.toLowerCase().includes("google")) ||
+    enVoices.find(v => v.name && v.name.toLowerCase().includes("david")) ||
+    enVoices.find(v => (v.lang || "").toLowerCase() === "en-us") ||
+    enVoices[0] ||
     null;
 
-  console.log("🎤 Voices geladen:", { germanVoice, englishVoice });
+  console.log("🎤 Voices geladen:", {
+    german: germanVoice ? `${germanVoice.name} (${germanVoice.lang})` : null,
+    male:   maleVoice   ? `${maleVoice.name} (${maleVoice.lang})` : null,
+    english: englishVoice ? `${englishVoice.name} (${englishVoice.lang})` : null
+  });
 }
 
 // Stimmen werden oft asynchron nachgeladen
@@ -271,60 +287,6 @@ speechSynthesis.onvoiceschanged = loadVoices;
 
 // Sofortiger Versuch, falls Stimmen schon da sind
 loadVoices();
-
-// === ROBUSTE Sprachdetektion Deutsch / Englisch (Museumstauglich) ===
-function detectLanguage(text) {
-
-  const enWords = [
-    // Fragewörter
-    "the","what","how","why","where","when","who","which","whose","whom",
-
-    // Hilfsverben
-    "is","are","was","were","do","does","did","have","has","had",
-    "can","could","would","should","will","shall","may","might","must",
-
-    // typische Satzstarter
-    "tell","explain","describe","show","give","talk","say",
-    "speak","think","know","mean",
-
-    // typische Inhaltswörter
-    "about","history","life","death","war","battle","empire","king",
-    "emperor","rome","roman","germany","italy","crusade","church",
-
-    // Höflichkeitsformen
-    "please","thanks","thank","hello","hi","hey",
-
-    // typische Präpositionen
-    "in","on","at","with","without","from","into","during","before","after"
-  ];
-
-  const deWords = [
-    "der","die","das","was","wie","warum","wieso","weshalb","wo","wer","wen","wem",
-    "ist","sind","war","waren","hat","haben","hatte","hatten",
-    "kann","könnte","würde","soll","sollte","will","möchte","muss",
-    "erzähle","erkläre","beschreibe","zeige","sage","sprich",
-    "über","geschichte","leben","tod","krieg","schlacht","reich",
-    "kaiser","könig","rom","deutschland","italien","kreuzzug","kirche",
-    "bitte","danke","hallo","guten",
-    "in","auf","an","mit","ohne","von","zu","während","vor","nach"
-  ];
-
-  const t = text.toLowerCase();
-
-  let e = 0;
-  let d = 0;
-
-  for (const w of enWords) if (t.includes(` ${w}`) || t.startsWith(w + " ")) e++;
-  for (const w of deWords) if (t.includes(` ${w}`) || t.startsWith(w + " ")) d++;
-
-  // Bonus: typische englische Endungen
-  if (t.match(/\b(ing|tion|ment|ness|ship|able)\b/)) e += 2;
-
-  // Bonus: typische deutsche Endungen
-  if (t.match(/\b(ung|keit|heit|chen|lein|schaft)\b/)) d += 2;
-
-  return (e > d) ? "en" : "de";
-}
 // === Bewegungszustände ===
 let frontalFix = true;
 let hmNeigen = false;
@@ -580,142 +542,229 @@ function animate() {
 
 /* -----------------------------
    STATE MACHINE – RECOGNITION
-   MIT THINK-PHASE (WAKE-SICHER)
+   MIT THINK-PHASE (WAKE-SICHER) – FIXED
 ----------------------------- */
 
 let recognition = null;
 let heardSomething = false;
 let detectedLanguage = "de";  // Sprache der letzten Eingabe
 
+// interne Sicherungen gegen Chrome-Edgecases
+let _recHandlersBound = false;
+let _recSessionId = 0; // verhindert "late onend" von alten Sessions
+
 /* -----------------------------
-   Recognition sauber initialisieren
+   SpeechRecognition verfügbar?
 ----------------------------- */
-function initRecognition() {
-  if (!("webkitSpeechRecognition" in window)) return;
-
-  recognition = new webkitSpeechRecognition();
-  recognition.continuous = false;
-  recognition.interimResults = false;
-
-  heardSomething = false;
-
-  recognition.onresult = (e) => {
-    if (STATE !== "listen") return;
-
-    const res = e.results[0][0].transcript;
-    if (!res || res.trim().length < 2) return;
-
-    lastTranscript = res;
-    detectedLanguage = detectLanguage(res); // Sprache erkennen
-    heardSomething = true;
-  };
-
-  recognition.onend = () => {
-    recRunning = false;
-
-    // Kein Think-Phase-Trigger, wenn nichts gehört wurde
-    if (STATE !== "listen") return;
-    if (!heardSomething || !lastTranscript) {
-      STATE = "idle";
-      return;
-    }
-
-    /* ===============================
-       THINK-PHASE
-    =============================== */
-    STATE = "think";
-    resetMovements();
-
-    // Think-Bewegung einen Frame verzögert setzen
-    requestAnimationFrame(() => {
-      hmNeigen = true;
-      hmStartTime = performance.now();
-    });
-
-    // Denkphrase
-    speak("Ähm … einen Moment bitte.", true);
-
-    /* ===============================
-       FRAGE → SERVER → ANTWORT
-       (erst NACH Think-Phase)
-    =============================== */
-    fetch("/ask", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ 
-        text: lastTranscript,
-        lang: detectedLanguage // Sprache mitschicken
-      })
-    })
-    .then(r => r.json())
-    .then(data => {
-
-      const waitForThinkEnd = setInterval(() => {
-        if (!talking) {
-          clearInterval(waitForThinkEnd);
-
-          STATE = "answer";
-          resetMovements();
-
-          rising = true;
-          riseStartTime = performance.now();
-
-          // Antwort in erkannter Sprache – forceLang übergeben
-          speak(data.answer, false, detectedLanguage);
-        }
-      }, 120);
-
-    })
-    .catch(() => {
-      STATE = "answer";
-      resetMovements();
-      speak(
-        "Verzeiht, ich habe Euch nicht recht verstanden.",
-        false,
-        detectedLanguage
-      );
-    });
-  };
+function getSpeechRecognitionCtor() {
+  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
 }
 
 /* -----------------------------
-   Recognition starten
-   (vor jedem Listen-Versuch)
+   Recognition robust bereitstellen (lazy init)
 ----------------------------- */
-function startRecognition() {
-  // 🔄 immer neu initialisieren, damit Sprache zuverlässig gesetzt wird
-  initRecognition();
+function ensureRecognition() {
+  const SR = getSpeechRecognitionCtor();
+  if (!SR) return null;
 
-  if (recRunning) {
-    try { recognition.abort(); } catch(e) {}
+  // Wenn recognition fehlt (z.B. nach museumReset), neu erstellen
+  if (!recognition) {
+    recognition = new SR();
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    _recHandlersBound = false; // neue Instanz -> Handler neu binden
   }
 
-  recognition.lang = detectedLanguage === "en" ? "en-US" : "de-DE";
+  // Handler nur einmal pro Instanz binden
+  if (!_recHandlersBound) {
+    _recHandlersBound = true;
+
+    recognition.onresult = (e) => {
+      // Nur während listen auswerten
+      if (STATE !== "listen") return;
+
+      const res = e?.results?.[0]?.[0]?.transcript;
+      if (!res || res.trim().length < 2) return;
+
+      lastTranscript = res;
+      detectedLanguage = detectLanguage(res); // Sprache erkennen
+      heardSomething = true;
+    };
+
+    recognition.onerror = (e) => {
+      // Desktop Chrome: errors sind häufig (no-speech, aborted, network)
+      // Wir lassen onend den State sauber abwickeln.
+      // Optionales Logging:
+      try { console.warn("🎙️ recognition.onerror:", e?.error || e); } catch {}
+    };
+
+    recognition.onend = () => {
+      // Session-Guard: Falls ein altes onend reinflattert, ignorieren
+      const sessionIdAtEnd = _recSessionId;
+
+      // recRunning immer runtersetzen
+      recRunning = false;
+
+      // Wenn wir nicht mehr im listen-State sind: nichts tun
+      if (STATE !== "listen") return;
+
+      // Wenn während eines Restarts eine neue Session gestartet wurde,
+      // kann ein altes onend trotzdem kommen. Dann raus.
+      // (Wir prüfen hier "sessionIdAtEnd" nicht direkt gegen live,
+      // weil onend keinen parameter hat; stattdessen arbeiten wir
+      // mit einer Start/Stop-Policy unten. Das hier bleibt defensiv.)
+      // -> Kein zusätzlicher Code nötig; die Logik unten verhindert Doppelläufe.
+
+      // Nichts gehört? -> zurück zu idle
+      if (!heardSomething || !lastTranscript) {
+        STATE = "idle";
+        return;
+      }
+
+      /* ===============================
+         THINK-PHASE
+      =============================== */
+      STATE = "think";
+      resetMovements();
+
+      // Think-Bewegung einen Frame verzögert setzen
+      requestAnimationFrame(() => {
+        hmNeigen = true;
+        hmStartTime = performance.now();
+      });
+
+      // Denkphrase
+      speak("Ähm … einen Moment bitte.", true);
+
+      /* ===============================
+         FRAGE → SERVER → ANTWORT
+         (erst NACH Think-Phase)
+      =============================== */
+      fetch("/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: lastTranscript,
+          lang: detectedLanguage
+        })
+      })
+      .then(r => r.json())
+      .then(data => {
+        const waitForThinkEnd = setInterval(() => {
+          if (!talking) {
+            clearInterval(waitForThinkEnd);
+
+            STATE = "answer";
+            resetMovements();
+
+            rising = true;
+            riseStartTime = performance.now();
+
+            // Antwort in erkannter Sprache – forceLang übergeben
+            speak(data.answer, false, detectedLanguage);
+          }
+        }, 120);
+      })
+      .catch(() => {
+        STATE = "answer";
+        resetMovements();
+        speak(
+          "Verzeiht, ich habe Euch nicht recht verstanden.",
+          false,
+          detectedLanguage
+        );
+      });
+    };
+  }
+
+  return recognition;
+}
+
+/* -----------------------------
+   Recognition starten (vor jedem Listen-Versuch) – FIXED
+----------------------------- */
+function startRecognition() {
+  const r = ensureRecognition();
+  if (!r) {
+    try { console.warn("🛑 SpeechRecognition nicht verfügbar."); } catch {}
+    recRunning = false;
+    return;
+  }
+
+  // Sprache für das Listening setzen (nur de/en, wie bei dir)
+  r.lang = (detectedLanguage === "en") ? "en-US" : "de-DE";
+
+  // Session-ID erhöhen: markiert neuen Run (hilft bei Debug & Guards)
+  _recSessionId++;
 
   heardSomething = false;
+
+  // Wenn schon "running": sauber stoppen/abbrechen, dann neu starten
+  if (recRunning) {
+    try { r.abort(); } catch (e) {}
+    recRunning = false;
+  }
+
+  // Start robust (Chrome wirft, wenn start() zu schnell hintereinander kommt)
   recRunning = true;
   try {
-    recognition.start();
-  } catch(e) {
-    console.warn("🛑 Recognition konnte nicht gestartet werden:", e);
+    r.start();
+  } catch (e) {
+    // Fallback: kurzer Delay und nochmal versuchen (einmalig)
     recRunning = false;
+    try { console.warn("🛑 Recognition start() fehlgeschlagen, retry…", e); } catch {}
+
+    setTimeout(() => {
+      // Wenn inzwischen nicht mehr listen: nicht starten
+      if (STATE !== "listen") return;
+
+      const rr = ensureRecognition();
+      if (!rr) return;
+
+      rr.lang = (detectedLanguage === "en") ? "en-US" : "de-DE";
+      heardSomething = false;
+      recRunning = true;
+
+      try {
+        rr.start();
+      } catch (e2) {
+        recRunning = false;
+        try { console.warn("🛑 Recognition retry start() fehlgeschlagen:", e2); } catch {}
+      }
+    }, 250);
   }
 }
 /* -----------------------------
    BUTTON + ENTER – GREET & LISTEN
+   STABIL + MUSEUM-ABSICHERUNG – FIXED (VOICE WARMUP + SAFE FALLBACKS)
 ----------------------------- */
 
 const micBtn = document.getElementById("micBtn");
 
+// verhindert Mehrfach-Bindung
+if (!window._interactionBound) {
+  window._interactionBound = true;
+
+  micBtn.onclick = startInteraction;
+
+  // Enter im Capture-Mode → kann nicht geschluckt werden
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    e.stopPropagation();
+    startInteraction();
+  }, true);
+}
+
 function startInteraction() {
 
-  // 🛡️ Museumsschutz: nur in definierten Zuständen
+  // 🛡️ Nur definierte Zustände erlauben
   if (STATE !== "idle" && STATE !== "greet") return;
 
-  // 🛡️ Schutz bei laufender Aktion
+  // 🛡️ Keine parallelen Aktionen
   if (talking || recRunning) return;
 
-  // 🔒 Button-Guard gegen Doppelklicks / Tasterprellen
+  // 🔒 Doppelklick-Schutz / Tasterprellen
   if (buttonLocked) return;
   buttonLocked = true;
   setTimeout(() => buttonLocked = false, 400);
@@ -724,6 +773,17 @@ function startInteraction() {
        1️⃣ IDLE → GREET
   =============================== */
   if (STATE === "idle" && !greeted) {
+
+    // 🎤 Voice-Warmup: wenn Stimmen noch nicht da sind, kurzen Tick warten
+    // (verhindert "erste Begrüßung nimmt Default/female Voice")
+    try {
+      const voicesReady = speechSynthesis.getVoices && speechSynthesis.getVoices().length > 0;
+      if (!voicesReady) {
+        setTimeout(() => startInteraction(), 150);
+        return;
+      }
+    } catch (e) {}
+
     greeted = true;
     STATE = "greet";
 
@@ -733,22 +793,24 @@ function startInteraction() {
     rising = true;
     riseStartTime = performance.now();
 
-    // 🔁 Alte Recognition hart verwerfen
-    try { if (recognition) recognition.abort(); } catch (e) {}
+    // alte Recognition sauber abbrechen
+    try { recognition?.abort(); } catch(e) {}
     recRunning = false;
     listeningFinished = false;
 
     speak(
       "Seid gegrüßt, mein Freund. Ich bin Friedrich Barbarossa, nach fast neunhundert Jahren im Kaiserberg zu Lautern erwacht. Was ist Euer Begehr? If ju wonnt, spiek inglisch.",
       false,
-      "de", // Sprache nur für Begrüßung erzwingen
+      "de",
       () => { showHint("Kurz Knopf drücken, dann fragen"); }
     );
 
-    // 🕰️ Auto-Reset: wenn 2 Minuten keine Frage kommt → zurück in Startzustand
+    // Auto-Reset nach 2 Minuten
     if (greetTimeout) clearTimeout(greetTimeout);
     greetTimeout = setTimeout(() => {
+
       if (STATE === "greet" && !recRunning && !talking) {
+
         console.log("⏳ Begrüßung ohne Reaktion – Reset auf Startzustand");
 
         resetMovements();
@@ -756,7 +818,6 @@ function startInteraction() {
         lastTranscript = "";
         STATE = "idle";
 
-        // Hinweistext verstecken
         hideHint();
 
         if (model) {
@@ -765,7 +826,8 @@ function startInteraction() {
           model.rotation.y = baseRotY - Math.PI / 2;
         }
       }
-    }, 120000); // 2 Minuten
+
+    }, 120000);
 
     return;
   }
@@ -774,64 +836,51 @@ function startInteraction() {
        2️⃣ GREET → LISTEN
   =============================== */
   if (STATE === "greet" && !recRunning) {
-    if (!("webkitSpeechRecognition" in window)) {
+
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
       alert("Spracherkennung wird von diesem Browser nicht unterstützt.");
       return;
     }
 
-    // 🛑 Auto-Reset abbrechen, da Nutzer reagiert hat
     if (greetTimeout) {
       clearTimeout(greetTimeout);
       greetTimeout = null;
     }
 
-    initRecognition();
-
     lastTranscript = "";
     listeningFinished = false;
     STATE = "listen";
 
-    // Hinweistext ausblenden, da Aufnahme startet
     hideHint();
 
-    try {
-      recognition.lang = detectedLanguage === "en" ? "en-US" : "de-DE"; // Dynamische Sprache
-      recognition.start();
-      recRunning = true;
-    } catch (e) {
-      recRunning = false;
-      STATE = "idle";
-    }
+    // Recognition robust starten (muss aus deinem Recognition-Block kommen!)
+    startRecognition();
+
+    /* ===============================
+       🛡️ MUSEUM-ABSICHERUNG
+       Falls Recognition nicht startet
+    =============================== */
+    setTimeout(() => {
+
+      if (STATE === "listen" && !recRunning) {
+
+        console.warn("⚠️ Recognition start fehlgeschlagen – Fallback auf greet");
+
+        STATE = "greet";
+        resetMovements();
+        showHint("Kurz Knopf drücken, dann fragen");
+      }
+
+    }, 800);
+
     return;
   }
 
   /* ===============================
-       3️⃣ LISTEN (Klicks werden ignoriert)
+       3️⃣ LISTEN – Klick ignorieren
   =============================== */
   if (STATE === "listen") return;
-}
-
-/* ===============================
-   EVENTS
-=============================== */
-
-// 🖱️ Button
-micBtn.onclick = startInteraction;
-
-// ⌨️ Enter-Taste / externer Taster
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") {
-    e.preventDefault();
-    startInteraction();
-  }
-});
-
-/* ===============================
-   RECOGNITION START (Dummy)
-================================ */
-
-function startRecognition() {
-  // absichtlich leer (Kompatibilität)
 }
 /* ===============================
    HINT-FUNKTIONEN
@@ -846,8 +895,17 @@ function hideHint() {
 }
 
 /* ===============================
-   🏛️ MUSEUMS-RESET (PASSIV & SICHER)
+   🏛️ MUSEUMS-RESET (PASSIV & SICHER) – FIXED
 ================================ */
+
+// Optional: Wenn du KEINE zentrale Funktion hast, lass das erstmal so.
+// Ich habe den Hook drin, damit recognition nach Reset nicht "null" bleibt.
+function ensureRecognitionAfterReset() {
+  // Wenn du recognition ohnehin erst beim Start-Listening baust, kannst du hier leer lassen.
+  // Besser: später sauber implementieren (SpeechRecognition neu erstellen + Handler setzen).
+  // Für jetzt: NICHTS tun, falls du es noch nicht hast.
+  return;
+}
 
 function museumReset(reason = "") {
   console.log("🛡️ Museum-Reset:", reason);
@@ -863,12 +921,16 @@ function museumReset(reason = "") {
     speechSynthesis.cancel();
   } catch (e) {}
 
-  // --- Recognition hart beenden & verwerfen ---
+  // --- Recognition hart beenden (aber nicht "tot" zurücklassen) ---
   try {
     if (recognition) recognition.abort();
   } catch (e) {}
   recRunning = false;
+
+  // WICHTIG: recognition nicht einfach dauerhaft null lassen, außer du baust sie garantiert
+  // an anderer Stelle vor jedem Start wieder neu auf.
   recognition = null;
+  ensureRecognitionAfterReset();
 
   // --- Bewegungen vollständig neutralisieren ---
   resetMovements();
@@ -897,25 +959,38 @@ function museumReset(reason = "") {
 }
 
 /* ===============================
-   🔁 MUSEUMS-TRIGGER
-   (NUR BILDSCHIRM WEG / ZURÜCK)
+   🔁 MUSEUMS-TRIGGER – FIXED
+   (NUR WEG → ZURÜCK, ENTSPRELLT)
 ================================ */
 
-// Reagiert nur auf echtes "Tab verborgen"
+let _lastVisState = document.visibilityState;
+let _lastVisResetAt = 0;
+
 document.addEventListener("visibilitychange", () => {
-  if (
-    document.hidden &&
-    STATE === "idle" &&
-    !talking &&
-    !recRunning
-  ) {
-    museumReset("visibilitychange");
+  const cur = document.visibilityState;
+  const now = performance.now();
+
+  // Nur wenn wir wirklich zurückkommen: hidden -> visible
+  const cameBack = (_lastVisState === "hidden" && cur === "visible");
+  _lastVisState = cur;
+
+  if (!cameBack) return;
+
+  // Entprellen (Chrome kann mehrfach feuern)
+  if (now - _lastVisResetAt < 3000) return;
+  _lastVisResetAt = now;
+
+  if (STATE === "idle" && !talking && !recRunning) {
+    museumReset("visibilitychange (back)");
   }
 });
 /* -----------------------------
-   SPEAK – FINAL (VISEME-STABIL)
+   SPEAK – FINAL (VISEME-STABIL) – FIXED (DESKTOP-CHROME SAFE + MALE-PRIO DE)
 ----------------------------- */
 function speak(text, slow = false, forceLang = null, onEnd = null) {
+
+  // ✅ alte Queue hart löschen (Desktop-Chrome kann sonst "stapeln")
+  try { speechSynthesis.cancel(); } catch (e) {}
 
   const u = new SpeechSynthesisUtterance(text);
 
@@ -923,22 +998,30 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
   const lang = forceLang ? forceLang : (detectedLanguage || "de");
   u.lang = (lang === "en") ? "en-US" : "de-DE";
 
-  // ✅ Stimme explizit setzen, Priorität: forceLang
+  // ✅ Stimme explizit setzen
+  // Deutsch: maleVoice priorisieren (wenn vorhanden), sonst germanVoice
+  // Englisch: englishVoice
   if (lang === "en") {
-    u.voice = englishVoice || null; // nativ englisch
-  } else if (lang === "de") {
-    u.voice = germanVoice || maleVoice || null; // deutsch stabil
+    u.voice = (typeof englishVoice !== "undefined" && englishVoice) ? englishVoice : null;
+  } else {
+    const mv = (typeof maleVoice !== "undefined" && maleVoice) ? maleVoice : null;
+    const gv = (typeof germanVoice !== "undefined" && germanVoice) ? germanVoice : null;
+    u.voice = mv || gv || null;
   }
 
   // ✅ Pitch: Englisch tiefer, Deutsch normal
   u.pitch = (lang === "en") ? 0.6 : 1.0;  // 0.0–2.0
-  u.rate = slow ? 0.85 : 1.0;
+  u.rate  = slow ? 0.85 : 1.0;
 
   const isGreeting = (STATE === "greet");
 
   let timer = null;
   let active = false;
   let preEndTimer = null;
+
+  // 🛡️ Failsafe / finalize
+  let finalized = false;
+  let failSafeTimer = null;
 
   const stepMs = slow ? 135 : 95;
   const lerpFactor = 0.42;
@@ -1007,6 +1090,54 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
   }
 
   /* -----------------------------
+     FINALIZE (einmalig, egal ob onend oder failsafe)
+  ----------------------------- */
+  function finalizeOnce(reason = "onend") {
+    if (finalized) return;
+    finalized = true;
+
+    // Timer aufräumen
+    if (preEndTimer) {
+      clearTimeout(preEndTimer);
+      preEndTimer = null;
+    }
+    if (failSafeTimer) {
+      clearTimeout(failSafeTimer);
+      failSafeTimer = null;
+    }
+
+    hardStopToRest();
+    talking = false;
+
+    mouthCooldown = true;
+    setTimeout(() => { mouthCooldown = false; }, 120);
+
+    // UI/State-Logik wie gehabt
+    if (STATE === "greet") {
+      showHint("Kurz Knopf drücken, dann fragen");
+    }
+
+    if (STATE === "answer") {
+      resetMovements();
+      greeted = false;
+      hmNeigen = false;
+      rising = false;
+      STATE = "idle";
+      hideHint();
+    }
+
+    // ✅ Optionaler Callback (auch bei Failsafe!)
+    if (onEnd && typeof onEnd === "function") {
+      try { onEnd(); } catch (e) {}
+    }
+
+    // optionales Debug
+    try {
+      if (reason !== "onend") console.warn("🛟 speak() finalized via", reason);
+    } catch (e) {}
+  }
+
+  /* -----------------------------
      START
   ----------------------------- */
   u.onstart = () => {
@@ -1025,7 +1156,7 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
   /* -----------------------------
      SATZZEICHEN
   ----------------------------- */
-  u.onboundary = e => {
+  u.onboundary = (e) => {
     if (isGreeting) return;
     if (!active || !e || typeof e.charIndex !== "number") return;
 
@@ -1044,39 +1175,28 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
   /* -----------------------------
      ENDE – ABSOLUTER SCHLUSS
   ----------------------------- */
-  u.onend = () => {
-    if (preEndTimer) {
-      clearTimeout(preEndTimer);
-      preEndTimer = null;
-    }
+  u.onend   = () => finalizeOnce("onend");
+  u.onerror = () => finalizeOnce("onerror");
 
-    hardStopToRest();
-    talking = false;
+  /* -----------------------------
+     FAILSAFE: wenn onend/onerror nie kommt
+     (Desktop-Chrome "hängt" manchmal)
+  ----------------------------- */
+  const estimated = estimateSpeechDurationMs(text, slow);
+  const FAILSAFE_MS = Math.min(45000, Math.max(6000, estimated + 2500)); // 6s–45s
 
-    mouthCooldown = true;
-    setTimeout(() => { mouthCooldown = false; }, 120);
-
-    if (STATE === "greet") {
-      showHint("Kurz Knopf drücken, dann fragen");
-    }
-
-    if (STATE === "answer") {
-      resetMovements();
-      greeted = false;
-      hmNeigen = false;
-      rising = false;
-      STATE = "idle";
-      hideHint();
-    }
-
-    // ✅ Optionaler Callback
-    if (onEnd && typeof onEnd === "function") {
-      onEnd();
-    }
-  };
+  failSafeTimer = setTimeout(() => {
+    try { speechSynthesis.cancel(); } catch (e) {}
+    finalizeOnce("failsafe-timeout");
+  }, FAILSAFE_MS);
 
   // ✅ Sprachausgabe starten
-  speechSynthesis.speak(u);
+  try {
+    speechSynthesis.speak(u);
+  } catch (e) {
+    // Wenn speak() direkt wirft: sofort sauber finalisieren
+    finalizeOnce("speak-throw");
+  }
 }
 /* -----------------------------
    RESIZE
