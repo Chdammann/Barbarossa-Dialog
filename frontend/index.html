@@ -952,7 +952,7 @@ function startInteraction() {
     listeningFinished = false;
 
     speak(
-      "Seid gegrüßt, mein Freund. Ich bin Friedrich Barbarossa, nach fast neunhundert Jahren im Kaiserberg zu Lautern erwacht. Was ist Euer Begehr? If ju wonnt ju kenn ask ollso in inglisch.",
+      "Seid gegrüßt, mein Freund. Ich bin Friedrich Barbarossa, nach fast neunhundert Jahren im Kaiserberg zu Lautern erwacht. Was ist Euer Begehr? If ju wonnt, ju kenn ask ollso in inglisch.",
       false,
       "de",
       () => { try { showHint("Kurz Knopf drücken, dann fragen"); } catch (e) {} }
@@ -1164,7 +1164,7 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
     u.voice = mv || gv || null;
   }
 
-  u.pitch = (lang === "en") ? 0.35 : 1.0;
+  u.pitch = (lang === "en") ? 0.25 : 1.0;
   u.rate = (lang === "en") ? 0.92 : (slow ? 0.85 : 1.0);
 
   const isGreeting = (STATE === "greet");
