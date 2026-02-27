@@ -551,7 +551,7 @@ let detectedLanguage = "de";  // Sprache der letzten Eingabe
 
 // interne Sicherungen gegen Chrome-Edgecases
 let _recHandlersBound = false;
-let _recSessionId = 0; // verhindert "late onend" von alten Sessions
+let _recSessionId = 0;
 
 /* -----------------------------
    SpeechRecognition verfügbar?
@@ -567,55 +567,39 @@ function ensureRecognition() {
   const SR = getSpeechRecognitionCtor();
   if (!SR) return null;
 
-  // Wenn recognition fehlt (z.B. nach museumReset), neu erstellen
   if (!recognition) {
     recognition = new SR();
     recognition.continuous = false;
     recognition.interimResults = false;
-    _recHandlersBound = false; // neue Instanz -> Handler neu binden
+    _recHandlersBound = false;
   }
 
-  // Handler nur einmal pro Instanz binden
   if (!_recHandlersBound) {
     _recHandlersBound = true;
 
     recognition.onresult = (e) => {
-      // Nur während listen auswerten
       if (STATE !== "listen") return;
 
       const res = e?.results?.[0]?.[0]?.transcript;
       if (!res || res.trim().length < 2) return;
 
       lastTranscript = res;
-      detectedLanguage = detectLanguage(res); // Sprache erkennen
+
+      // ✅ FIX: detectLanguage kann fehlen → dann default "de"
+      detectedLanguage = (typeof detectLanguage === "function") ? detectLanguage(res) : "de";
+
       heardSomething = true;
     };
 
     recognition.onerror = (e) => {
-      // Desktop Chrome: errors sind häufig (no-speech, aborted, network)
-      // Wir lassen onend den State sauber abwickeln.
-      // Optionales Logging:
       try { console.warn("🎙️ recognition.onerror:", e?.error || e); } catch {}
     };
 
     recognition.onend = () => {
-      // Session-Guard: Falls ein altes onend reinflattert, ignorieren
-      const sessionIdAtEnd = _recSessionId;
-
-      // recRunning immer runtersetzen
       recRunning = false;
 
-      // Wenn wir nicht mehr im listen-State sind: nichts tun
       if (STATE !== "listen") return;
 
-      // Wenn während eines Restarts eine neue Session gestartet wurde,
-      // kann ein altes onend trotzdem kommen. Dann raus.
-      // (Wir prüfen hier "sessionIdAtEnd" nicht direkt gegen live,
-      // weil onend keinen parameter hat; stattdessen arbeiten wir
-      // mit einer Start/Stop-Policy unten. Das hier bleibt defensiv.)
-      // -> Kein zusätzlicher Code nötig; die Logik unten verhindert Doppelläufe.
-
-      // Nichts gehört? -> zurück zu idle
       if (!heardSomething || !lastTranscript) {
         STATE = "idle";
         return;
@@ -627,18 +611,15 @@ function ensureRecognition() {
       STATE = "think";
       resetMovements();
 
-      // Think-Bewegung einen Frame verzögert setzen
       requestAnimationFrame(() => {
         hmNeigen = true;
         hmStartTime = performance.now();
       });
 
-      // Denkphrase
       speak("Ähm … einen Moment bitte.", true);
 
       /* ===============================
          FRAGE → SERVER → ANTWORT
-         (erst NACH Think-Phase)
       =============================== */
       fetch("/ask", {
         method: "POST",
@@ -660,7 +641,6 @@ function ensureRecognition() {
             rising = true;
             riseStartTime = performance.now();
 
-            // Antwort in erkannter Sprache – forceLang übergeben
             speak(data.answer, false, detectedLanguage);
           }
         }, 120);
@@ -691,31 +671,24 @@ function startRecognition() {
     return;
   }
 
-  // Sprache für das Listening setzen (nur de/en, wie bei dir)
   r.lang = (detectedLanguage === "en") ? "en-US" : "de-DE";
-
-  // Session-ID erhöhen: markiert neuen Run (hilft bei Debug & Guards)
   _recSessionId++;
 
   heardSomething = false;
 
-  // Wenn schon "running": sauber stoppen/abbrechen, dann neu starten
   if (recRunning) {
     try { r.abort(); } catch (e) {}
     recRunning = false;
   }
 
-  // Start robust (Chrome wirft, wenn start() zu schnell hintereinander kommt)
   recRunning = true;
   try {
     r.start();
   } catch (e) {
-    // Fallback: kurzer Delay und nochmal versuchen (einmalig)
     recRunning = false;
     try { console.warn("🛑 Recognition start() fehlgeschlagen, retry…", e); } catch {}
 
     setTimeout(() => {
-      // Wenn inzwischen nicht mehr listen: nicht starten
       if (STATE !== "listen") return;
 
       const rr = ensureRecognition();
