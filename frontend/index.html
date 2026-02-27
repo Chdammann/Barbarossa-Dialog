@@ -349,7 +349,10 @@ function resetMovements() {
   toIdlePose = false;
 }
 
-  // === ROBUSTE Sprachdetektion Deutsch / Englisch (Museumstauglich) – FIXED v2 ===
+ // ===============================
+// detectLanguage – GLOBAL (ROBUST v3)
+// Deutsch gewinnt bei Tie. Englisch nur bei klaren EN-Signalen.
+// ===============================
 function detectLanguage(text) {
   const t0 = String(text || "").trim();
   if (!t0) return "de";
@@ -357,14 +360,17 @@ function detectLanguage(text) {
   const t = t0.toLowerCase();
 
   // Harte DE-Indikatoren
-  if (/[äöüß]/i.test(t0)) return "de";
+  if (/[äöüß]/.test(t0)) return "de";
 
-  // Harte EN-Indikatoren
+  // Harte EN-Indikatoren (wenn das drin ist, ist es praktisch immer Englisch)
   if (/\b(what|why|where|when|who|which|how|please)\b/.test(t)) return "en";
+  if (/\b(i'm|you're|we're|they're|don't|can't|won't|it's)\b/.test(t)) return "en";
 
+  // Tokenize
   const tokens = t.split(/[^a-zA-Zäöüß]+/).filter(Boolean);
 
-  const enWords = new Set([
+  // DE/EN Wortlisten ohne überlappende Miniwörter (in/on/at etc.)
+  const en = new Set([
     "the","a","an","and","or","but",
     "is","are","was","were","do","does","did",
     "have","has","had","can","could","would","should","will","shall","may","might","must",
@@ -374,36 +380,33 @@ function detectLanguage(text) {
     "thanks","thank","hello","hi","hey"
   ]);
 
-  const deWords = new Set([
+  const de = new Set([
     "der","die","das","und","oder","aber",
-    "ist","sind","war","waren",
+    "ist","sind","war","waren","bin","bist","seid",
+    "ich","du","ihr","wir","sie","er","es","mein","dein","euer",
+    "nicht","kein","keine","einen","eine","einem","einer",
     "habe","hast","hat","haben","habt","hatte","hatten",
     "kann","könnte","würde","soll","sollte","will","möchte","muss","müssen",
-    "erzähle","erkläre","beschreibe","zeige","sage","sprich",
+    "erzähle","erkläre","beschreibe","zeige","sage","sprich","nenne","heißt","bedeutet",
     "über","geschichte","leben","tod","krieg","schlacht","reich",
     "kaiser","könig","rom","deutschland","italien","kreuzzug","kirche",
-    "bitte","danke","hallo","guten"
+    "bitte","danke","hallo","guten","tag"
   ]);
 
-  let e = 0;
-  let d = 0;
-
+  let e = 0, d = 0;
   for (const w of tokens) {
-    if (enWords.has(w)) e++;
-    if (deWords.has(w)) d++;
+    if (en.has(w)) e++;
+    if (de.has(w)) d++;
   }
 
-  if (/\b(ing|tion|ment|ness|ship|able)\b/.test(t)) e += 3;
-  if (/\b(ung|keit|heit|chen|lein|schaft)\b/.test(t)) d += 3;
-  if (/\b(i'm|you're|we're|they're|don't|can't|won't|it's)\b/.test(t)) e += 4;
+  // Endungs-Boni
+  if (/\b(ing|tion|ment|ness|ship|able)\b/.test(t)) e += 2;
+  if (/\b(ung|keit|heit|chen|lein|schaft)\b/.test(t)) d += 2;
 
   if (e > d) return "en";
   if (d > e) return "de";
 
-  // Tie-breaker: ASCII-only → eher EN
-  const asciiOnly = /^[a-z0-9\s'".,!?-]+$/i.test(t0);
-  if (asciiOnly) return "en";
-
+  // Tie → DE (Museum-Default)
   return "de";
 }
  // ===============================
@@ -850,7 +853,7 @@ function startRecognition() {
 }
 /* -----------------------------
    BUTTON + ENTER – GREET & LISTEN
-   STABIL + MUSEUM-ABSICHERUNG – FIXED (VOICE WARMUP + SAFE FALLBACKS)
+   STABIL – FIXED v3 (FLAG RESYNC → ENTER NIE TOT)
 ----------------------------- */
 
 const micBtn = document.getElementById("micBtn");
@@ -870,30 +873,64 @@ if (!window._interactionBound) {
   }, true);
 }
 
+/* ===============================
+   🔧 RESYNC: Flags & State heilen
+   (häufigster Grund für "Enter tot" ohne Errors)
+================================ */
+let _lastHealAt = 0;
+function healIfStuck(tag = "") {
+  const now = performance.now();
+  if (now - _lastHealAt < 200) return; // Entprellen
+  _lastHealAt = now;
+
+  // talking-Desync heilen (Chrome liefert manchmal speaking=false, aber talking bleibt true)
+  try {
+    const speaking = !!(window.speechSynthesis && speechSynthesis.speaking);
+    if (!speaking && talking) {
+      console.warn("🩹 heal:", tag, "talking=true aber speechSynthesis.speaking=false → talking=false");
+      talking = false;
+    }
+  } catch (e) {}
+
+  // recRunning-Desync heilen
+  if (recRunning && !recognition) {
+    console.warn("🩹 heal:", tag, "recRunning=true aber recognition=null → recRunning=false");
+    recRunning = false;
+  }
+
+  // Wenn alles ruhig ist, aber STATE hängt → zurück auf greet (Hint bleibt sinnvoll)
+  const quiet = (!talking && !recRunning);
+  if (quiet && STATE !== "idle" && STATE !== "greet") {
+    console.warn("🩹 heal:", tag, "STATE hängt:", STATE, "→ greet");
+    STATE = "greet";
+    try { showHint("Kurz Knopf drücken, dann fragen"); } catch (e) {}
+  }
+}
+
 function startInteraction() {
 
-  // 🛡️ Nur definierte Zustände erlauben
-  if (STATE !== "idle" && STATE !== "greet") return;
+  // ✅ vor jeder Aktion heilen
+  healIfStuck("enter/click");
 
-  // 🛡️ Keine parallelen Aktionen
+  // 🛡️ keine parallelen Aktionen
   if (talking || recRunning) return;
 
   // 🔒 Doppelklick-Schutz / Tasterprellen
   if (buttonLocked) return;
   buttonLocked = true;
-  setTimeout(() => buttonLocked = false, 400);
+  setTimeout(() => buttonLocked = false, 350);
 
   /* ===============================
        1️⃣ IDLE → GREET
   =============================== */
   if (STATE === "idle" && !greeted) {
 
-    // 🎤 Voice-Warmup: wenn Stimmen noch nicht da sind, kurzen Tick warten
-    // (verhindert "erste Begrüßung nimmt Default/female Voice")
+    // Voice-Warmup
     try {
-      const voicesReady = typeof speechSynthesis !== "undefined"
-        && typeof speechSynthesis.getVoices === "function"
-        && speechSynthesis.getVoices().length > 0;
+      const voicesReady =
+        typeof speechSynthesis !== "undefined" &&
+        typeof speechSynthesis.getVoices === "function" &&
+        speechSynthesis.getVoices().length > 0;
 
       if (!voicesReady) {
         setTimeout(() => startInteraction(), 150);
@@ -910,24 +947,22 @@ function startInteraction() {
     rising = true;
     riseStartTime = performance.now();
 
-    // alte Recognition sauber abbrechen
     try { recognition?.abort(); } catch(e) {}
     recRunning = false;
     listeningFinished = false;
 
     speak(
-      "Seid gegrüßt, mein Freund. Ich bin Friedrich Barbarossa, nach fast neunhundert Jahren im Kaiserberg zu Lautern erwacht. Was ist Euer Begehr? If ju wonnt, spiek inglisch.",
+      "Seid gegrüßt, mein Freund. Ich bin Friedrich Barbarossa, nach fast neunhundert Jahren im Kaiserberg zu Lautern erwacht. Was ist Euer Begehr? If you want speak english.",
       false,
       "de",
-      () => { showHint("Kurz Knopf drücken, dann fragen"); }
+      () => { try { showHint("Kurz Knopf drücken, dann fragen"); } catch (e) {} }
     );
 
     // Auto-Reset nach 2 Minuten
     if (greetTimeout) clearTimeout(greetTimeout);
     greetTimeout = setTimeout(() => {
-
+      healIfStuck("greet-timeout-check");
       if (STATE === "greet" && !recRunning && !talking) {
-
         console.log("⏳ Begrüßung ohne Reaktion – Reset auf Startzustand");
 
         resetMovements();
@@ -935,7 +970,7 @@ function startInteraction() {
         lastTranscript = "";
         STATE = "idle";
 
-        hideHint();
+        try { hideHint(); } catch (e) {}
 
         if (model) {
           model.position.y = baseY;
@@ -943,7 +978,6 @@ function startInteraction() {
           model.rotation.y = baseRotY - Math.PI / 2;
         }
       }
-
     }, 120000);
 
     return;
@@ -960,8 +994,8 @@ function startInteraction() {
       return;
     }
 
-    // ✅ Hint muss SOFORT beim Enter verschwinden
-    hideHint();
+    // Hint sofort weg beim Start Listening
+    try { hideHint(); } catch (e) {}
 
     if (greetTimeout) {
       clearTimeout(greetTimeout);
@@ -972,32 +1006,25 @@ function startInteraction() {
     listeningFinished = false;
     STATE = "listen";
 
-    // Recognition robust starten (muss aus deinem Recognition-Block kommen!)
     startRecognition();
 
-    /* ===============================
-       🛡️ MUSEUM-ABSICHERUNG
-       Falls Recognition nicht startet
-    =============================== */
+    // Falls Recognition nicht startet → zurück zu greet + Hint
     setTimeout(() => {
+      // nochmal heilen (falls Chrome Sessions verschluckt)
+      healIfStuck("listen-start-guard");
 
       if (STATE === "listen" && !recRunning) {
-
         console.warn("⚠️ Recognition start fehlgeschlagen – Fallback auf greet");
-
         STATE = "greet";
         resetMovements();
-        showHint("Kurz Knopf drücken, dann fragen");
+        try { showHint("Kurz Knopf drücken, dann fragen"); } catch (e) {}
       }
-
-    }, 800);
+    }, 900);
 
     return;
   }
 
-  /* ===============================
-       3️⃣ LISTEN – Klick ignorieren
-  =============================== */
+  // LISTEN ignoriert Enter (wie gehabt)
   if (STATE === "listen") return;
 }
 
