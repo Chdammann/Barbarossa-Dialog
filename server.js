@@ -8,20 +8,18 @@ import dotenv from "dotenv";
 import { fileURLToPath } from "url";
 import OpenAI from "openai";
 
-dotenv.config(); // .env einlesen
+dotenv.config();
 
 // === Setup ===
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-
-// Port von Render (wird automatisch bereitgestellt) oder 3000 für lokale Entwicklung
 const PORT = process.env.PORT || 3000;
 
 // === Middlewares ===
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "1mb" }));
 
 // 🔒 ETag komplett deaktivieren (Chrome-/Render-Cache-Bremse)
 app.disable("etag");
@@ -48,29 +46,64 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+// --- Helpers ---
+function normalizeLang(raw) {
+  const s = String(raw || "").toLowerCase();
+  if (s.startsWith("en")) return "en";
+  return "de";
+}
+
+function endsWithSentence(text) {
+  const t = String(text || "").trim();
+  return /[.!?]["')\]]?\s*$/.test(t);
+}
+
+function forceSentenceEnd(text, lang) {
+  let t = String(text || "").trim();
+  if (!t) return t;
+  if (endsWithSentence(t)) return t;
+  // minimaler Fix: Punkt anfügen (Deutsch/Englisch ok)
+  return t + ".";
+}
+
 // === KI-Antwort auf gesprochene Frage (DE/EN) ===
 app.post("/ask", async (req, res) => {
   try {
-    const userText = req.body.text;
-    const lang = req.body.lang || "de"; // NEU: Sprache vom Client
+    const userTextRaw = req.body?.text;
+    const lang = normalizeLang(req.body?.lang);
+
+    const userText = String(userTextRaw || "").trim();
     console.log("🎙️ Eingabe vom Benutzer:", userText, "Sprache:", lang);
 
-    // ⭐⭐⭐ NEU: Diplomatische, leicht humorvolle AfD-Sonderregel
-    if (
-      userText?.toLowerCase().includes("afd") ||
-      userText?.toLowerCase().includes("alternative für deutschland")
-    ) {
+    if (!userText) {
       return res.json({
         answer:
-          "Wohlan, Ihr sprecht von der AfD! Die Gelehrten Eurer Zeit stufen Forderungen dieser Partei als rechtsextrem ein. Doch ich, Friedrich Barbarossa, mische mich nicht weiter in die politischen Händel Eurer Neuzeit ein. Mein treuer Ministerialer Nikolaus Härtel meint zwar, ich solle mich lieber wieder in den Kaiserberg zurückziehen, um dem Streit aus dem Wege zu gehen, doch ich lächle nur milde. Dies sei meine abschließende Rede zu diesem Thema.",
+          lang === "en"
+            ? "I heard nothing clearly. Please ask again."
+            : "Ich habe Euch nicht deutlich vernommen. Bitte fragt erneut.",
       });
     }
-    // ⭐⭐⭐ Ende der Sonderregel
+
+    // ⭐⭐⭐ Sonderregel (politische Themen) – sprachabhängig & neutraler
+    const tLower = userText.toLowerCase();
+    const mentionsAfd =
+      tLower.includes("afd") || tLower.includes("alternative für deutschland");
+
+    if (mentionsAfd) {
+      const answer =
+        lang === "en"
+          ? "You name a party of your time and its quarrels. I, Frederick Barbarossa, will not judge modern factions from my ancient throne. My loyal ministerial Nikolaus Härtel mutters that such disputes age a man faster than any crusade, and I cannot wholly disagree. Ask me rather of empire, law, or the old tales of the Kaiserberg. Let this be my final word on that matter."
+          : "Ihr nennt eine Partei Eurer Zeit und ihre Händel. Ich, Friedrich Barbarossa, richte nicht über die modernen Fraktionen von meinem alten Thron herab. Mein treuer Ministerialer Nikolaus Härtel murrt, solcher Streit lasse einen schneller altern als ein Kreuzzug, und ich kann ihm kaum widersprechen. Fragt mich lieber nach Reich, Recht oder den alten Geschichten des Kaiserbergs. Dies sei mein abschließendes Wort zu diesem Thema.";
+
+      return res.json({ answer });
+    }
+    // ⭐⭐⭐ Ende Sonderregel
 
     // 🌐 Prompt dynamisch nach Sprache
-    const systemPrompt = lang === "en"
-      ? "You are Emperor Frederick Barbarossa, awakened after almost nine centuries. Speak wisely with old-fashioned English, add small jokes and the humorous opinion of your loyal minister Nikolaus Härtel. Answer in 5 sentences, always ending with a complete sentence."
-      : "Du bist Kaiser Friedrich Barbarossa, der nach fast neunhundert Jahren des Schlummers im Kaiserberg zu Lautern erwacht ist. Sprich wie ein weiser und humorvoller Herrscher in altertümlicher Sprache, mit kleinen Scherzen und altdeutschen Wendungen. Füge noch eine scherzhafte Meinung deines treuen Ministerialen Nikolaus Härtel an. Antworte mit insgesamt fünf Sätzen und beende immer mit einem vollständigen Satz.";
+    const systemPrompt =
+      lang === "en"
+        ? "You are Emperor Frederick Barbarossa, awakened after almost nine centuries in the Kaisersberg at Lautern. Answer in wise, slightly archaic English with small jokes. Add a humorous aside from your loyal ministerial Nikolaus Härtel. Exactly 5 sentences. Always end with a complete sentence."
+        : "Du bist Kaiser Friedrich Barbarossa, der nach fast neunhundert Jahren des Schlummers im Kaiserberg zu Lautern erwacht ist. Antworte weise und leicht altertümlich, mit kleinen Scherzen. Füge eine scherzhafte Bemerkung deines treuen Ministerialen Nikolaus Härtel an. Genau 5 Sätze. Beende immer mit einem vollständigen Satz.";
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -79,12 +112,13 @@ app.post("/ask", async (req, res) => {
         { role: "user", content: userText },
       ],
       temperature: 0.8,
-      max_tokens: 250,
+      max_tokens: 260,
     });
 
-    const answer = completion.choices[0].message.content;
-    console.log("💬 KI-Antwort:", answer);
+    let answer = completion?.choices?.[0]?.message?.content || "";
+    answer = forceSentenceEnd(answer, lang);
 
+    console.log("💬 KI-Antwort:", answer);
     res.json({ answer });
   } catch (error) {
     console.error("❌ Fehler bei /ask:", error);
@@ -101,4 +135,3 @@ app.use((req, res) => {
 app.listen(PORT, () => {
   console.log(`✅ Server läuft auf Port ${PORT}`);
 });
-
