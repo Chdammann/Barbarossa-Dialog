@@ -626,30 +626,21 @@ function animate() {
   
 /* -----------------------------
    STATE MACHINE – RECOGNITION
-   MIT THINK-PHASE (WAKE-SICHER) – FIXED (DESKTOP-CHROME SAFE)
+   MIT THINK-PHASE (WAKE-SICHER) – FIXED v2 (FORCE EN ANSWERS)
 ----------------------------- */
 
 let recognition = null;
 let heardSomething = false;
-let detectedLanguage = "de";  // Sprache der letzten Eingabe
+let detectedLanguage = "de";
 
-// interne Sicherungen gegen Chrome-Edgecases
 let _recHandlersBound = false;
 let _recSessionId = 0;
-
-// verhindert Think/Fetch nach bewusstem Abort/Stop
 let _recAbortByUs = false;
 
-/* -----------------------------
-   SpeechRecognition verfügbar?
------------------------------ */
 function getSpeechRecognitionCtor() {
   return window.SpeechRecognition || window.webkitSpeechRecognition || null;
 }
 
-/* -----------------------------
-   Recognition robust bereitstellen (lazy init)
------------------------------ */
 function ensureRecognition() {
   const SR = getSpeechRecognitionCtor();
   if (!SR) return null;
@@ -671,45 +662,33 @@ function ensureRecognition() {
       if (!res || res.trim().length < 2) return;
 
       lastTranscript = res;
-
-      // detectLanguage kann fehlen → default "de"
       detectedLanguage = (typeof detectLanguage === "function") ? detectLanguage(res) : "de";
-
       heardSomething = true;
     };
 
     recognition.onerror = (e) => {
-      // bei Fehlern kommt oft anschließend onend – wir lassen onend die State-Logik machen
       try { console.warn("🎙️ recognition.onerror:", e?.error || e); } catch {}
     };
 
     recognition.onend = () => {
       recRunning = false;
 
-      // Wenn wir selbst abgebrochen haben: nichts weiter tun
       if (_recAbortByUs) {
         _recAbortByUs = false;
         return;
       }
 
-      // Session-Guard: merken, welche Session dieses onend beendet hat
       const endedSession = _recSessionId;
 
       if (STATE !== "listen") return;
-
-      // Wenn inzwischen eine neue Session gestartet wurde, dieses onend ignorieren
       if (endedSession !== _recSessionId) return;
 
-      // Nichts gehört? -> zurück zu GREET (museumfreundlich) + Hint
       if (!heardSomething || !lastTranscript) {
         STATE = "greet";
         showHint("Kurz Knopf drücken, dann fragen");
         return;
       }
 
-      /* ===============================
-         THINK-PHASE
-      =============================== */
       STATE = "think";
       resetMovements();
 
@@ -720,14 +699,17 @@ function ensureRecognition() {
 
       speak("Ähm … einen Moment bitte.", true);
 
-      /* ===============================
-         FRAGE → SERVER → ANTWORT
-      =============================== */
+      // ✅ Sprachinstruktion hart ergänzen (falls Server `lang` ignoriert)
+      const promptText =
+        (detectedLanguage === "en")
+          ? `${lastTranscript}\n\nPlease answer in English.`
+          : `${lastTranscript}\n\nBitte antworte auf Deutsch.`;
+
       fetch("/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          text: lastTranscript,
+          text: promptText,
           lang: detectedLanguage
         })
       })
@@ -743,6 +725,7 @@ function ensureRecognition() {
             rising = true;
             riseStartTime = performance.now();
 
+            // Sprache für TTS passend erzwingen
             speak(data.answer, false, detectedLanguage);
           }
         }, 120);
@@ -762,9 +745,6 @@ function ensureRecognition() {
   return recognition;
 }
 
-/* -----------------------------
-   Recognition starten (vor jedem Listen-Versuch) – FIXED
------------------------------ */
 function startRecognition() {
   const r = ensureRecognition();
   if (!r) {
@@ -774,13 +754,10 @@ function startRecognition() {
   }
 
   r.lang = (detectedLanguage === "en") ? "en-US" : "de-DE";
-
-  // Neue Session markieren
   _recSessionId++;
 
   heardSomething = false;
 
-  // Wenn schon running: sauber abbrechen
   if (recRunning) {
     _recAbortByUs = true;
     try { r.abort(); } catch (e) {}
@@ -813,7 +790,6 @@ function startRecognition() {
     }, 250);
   }
 }
-  
 /* -----------------------------
    BUTTON + ENTER – GREET & LISTEN
    STABIL + MUSEUM-ABSICHERUNG – FIXED (VOICE WARMUP + SAFE FALLBACKS)
@@ -1076,11 +1052,12 @@ document.addEventListener("visibilitychange", () => {
 });
   
 /* -----------------------------
-   SPEAK – FINAL (VISEME-STABIL) – FIXED (DESKTOP-CHROME SAFE + MALE-PRIO DE)
+   SPEAK – FINAL (VISEME-STABIL) – FIXED v2
+   (NO CUT-OFF: failsafe großzügig + cancelt nur wenn wirklich speaking)
 ----------------------------- */
 function speak(text, slow = false, forceLang = null, onEnd = null) {
 
-  // ✅ alte Queue hart löschen (Desktop-Chrome kann sonst "stapeln")
+  // Queue leeren (gegen Chrome-Stacking)
   try {
     if (window.speechSynthesis && typeof speechSynthesis.cancel === "function") {
       speechSynthesis.cancel();
@@ -1089,11 +1066,11 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
 
   const u = new SpeechSynthesisUtterance(text);
 
-  // ✅ Sprache bestimmen: forceLang priorisiert, sonst detectedLanguage global
+  // Sprache bestimmen
   const lang = forceLang ? forceLang : (detectedLanguage || "de");
   u.lang = (lang === "en") ? "en-US" : "de-DE";
 
-  // ✅ Stimme explizit setzen
+  // Stimme setzen (DE: maleVoice priorisiert)
   if (lang === "en") {
     u.voice = (typeof englishVoice !== "undefined" && englishVoice) ? englishVoice : null;
   } else {
@@ -1102,8 +1079,7 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
     u.voice = mv || gv || null;
   }
 
-  // ✅ Pitch: Englisch tiefer, Deutsch normal
-  u.pitch = (lang === "en") ? 0.6 : 1.0;  // 0.0–2.0
+  u.pitch = (lang === "en") ? 0.6 : 1.0;
   u.rate  = slow ? 0.85 : 1.0;
 
   const isGreeting = (STATE === "greet");
@@ -1112,7 +1088,6 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
   let active = false;
   let preEndTimer = null;
 
-  // 🛡️ Failsafe / finalize
   let finalized = false;
   let failSafeTimer = null;
 
@@ -1120,14 +1095,10 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
   const lerpFactor = 0.42;
   const baseClose = 0.04;
 
-  // visemeIndex robust holen (falls nicht im selben Script-Scope)
   const VI = (typeof visemeIndex !== "undefined" && visemeIndex)
     ? visemeIndex
     : (window.visemeIndex || null);
 
-  /* -----------------------------
-     HARTER STOP → RUHE
-  ----------------------------- */
   function hardStopToRest() {
     active = false;
 
@@ -1139,8 +1110,6 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
     if (!visemeMesh || !visemeMesh.morphTargetInfluences) return;
 
     visemeMesh.morphTargetInfluences.fill(0);
-
-    // M nur setzen, wenn Index vorhanden
     try {
       if (VI && typeof VI.M !== "undefined") {
         visemeMesh.morphTargetInfluences[VI.M] = baseClose;
@@ -1158,7 +1127,7 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
 
   function startVisemes() {
     if (active || !visemeMesh || !visemeMesh.morphTargetInfluences) return;
-    if (!VI) return; // ohne Indizes keine Steuerung
+    if (!VI) return;
 
     active = true;
     let targetIdx = VI[chooseNextViseme()];
@@ -1184,17 +1153,21 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
     }, stepMs);
   }
 
-  /* -----------------------------
-     GROBE DAUER-SCHÄTZUNG
-  ----------------------------- */
+  // ✅ bessere Dauer-Schätzung: Wörter statt Zeichen (deutlich näher an TTS)
   function estimateSpeechDurationMs(text, slow) {
-    const charsPerSecond = slow ? 8 : 12;
-    return (String(text || "").length / charsPerSecond) * 1000;
+    const t = String(text || "").trim();
+    if (!t) return 2000;
+
+    const words = t.split(/\s+/).filter(Boolean).length;
+
+    // konservativ (lieber zu lang als zu kurz, sonst wird abgeschnitten)
+    const wps = slow ? 1.6 : 2.1; // words per second
+    const base = (words / wps) * 1000;
+
+    // Puffer für Pausen/Satzzeichen/Chrome-Latenz
+    return base + 6000;
   }
 
-  /* -----------------------------
-     FINALIZE (einmalig, egal ob onend oder failsafe)
-  ----------------------------- */
   function finalizeOnce(reason = "onend") {
     if (finalized) return;
     finalized = true;
@@ -1214,7 +1187,6 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
     mouthCooldown = true;
     setTimeout(() => { mouthCooldown = false; }, 120);
 
-    // UI/State-Logik (optional guards)
     if (STATE === "greet") {
       if (typeof showHint === "function") showHint("Kurz Knopf drücken, dann fragen");
     }
@@ -1237,15 +1209,13 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
     } catch (e) {}
   }
 
-  /* -----------------------------
-     START
-  ----------------------------- */
   u.onstart = () => {
     talking = true;
     hardStopToRest();
     startVisemes();
 
-    const PRE_END_STOP_MS = 500;
+    // Visemes kurz vor Ende schließen (nur Mund, nicht Speech!)
+    const PRE_END_STOP_MS = 700;
     const estimated = estimateSpeechDurationMs(text, slow);
 
     preEndTimer = setTimeout(() => {
@@ -1253,47 +1223,37 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
     }, Math.max(0, estimated - PRE_END_STOP_MS));
   };
 
-  /* -----------------------------
-     SATZZEICHEN
-  ----------------------------- */
   u.onboundary = (e) => {
     if (isGreeting) return;
     if (!active || !e || typeof e.charIndex !== "number") return;
 
     const ch = String(text || "")[e.charIndex];
-
     if (",;:".includes(ch)) {
       active = false;
       setTimeout(() => startVisemes(), 90);
     }
-
     if (".!?".includes(ch)) {
       active = false;
     }
   };
 
-  /* -----------------------------
-     ENDE – ABSOLUTER SCHLUSS
-  ----------------------------- */
   u.onend   = () => finalizeOnce("onend");
   u.onerror = () => finalizeOnce("onerror");
 
-  /* -----------------------------
-     FAILSAFE: wenn onend/onerror nie kommt
-  ----------------------------- */
-  const estimated = estimateSpeechDurationMs(text, slow);
-  const FAILSAFE_MS = Math.min(45000, Math.max(6000, estimated + 2500));
+  // ✅ FAILSAFE (viel großzügiger) – cancelt NUR wenn wirklich noch gesprochen wird
+  const est = estimateSpeechDurationMs(text, slow);
+  const FAILSAFE_MS = Math.min(120000, Math.max(12000, est)); // 12s–120s
 
   failSafeTimer = setTimeout(() => {
     try {
-      if (window.speechSynthesis && typeof speechSynthesis.cancel === "function") {
-        speechSynthesis.cancel();
+      const stillSpeaking = window.speechSynthesis && speechSynthesis.speaking;
+      if (stillSpeaking) {
+        try { speechSynthesis.cancel(); } catch (e) {}
       }
     } catch (e) {}
     finalizeOnce("failsafe-timeout");
   }, FAILSAFE_MS);
 
-  // ✅ Sprachausgabe starten
   try {
     if (window.speechSynthesis && typeof speechSynthesis.speak === "function") {
       speechSynthesis.speak(u);
@@ -1304,7 +1264,6 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
     finalizeOnce("speak-throw");
   }
 }
-  
 </script>
 </body>
 </html>
