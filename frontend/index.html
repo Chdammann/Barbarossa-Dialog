@@ -1156,16 +1156,31 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
   u.lang = (lang === "en") ? "en-US" : "de-DE";
 
   // Stimme setzen (DE: maleVoice priorisiert)
-  if (lang === "en") {
-    u.voice = (typeof englishVoice !== "undefined" && englishVoice) ? englishVoice : null;
-  } else {
-    const mv = (typeof maleVoice !== "undefined" && maleVoice) ? maleVoice : null;
-    const gv = (typeof germanVoice !== "undefined" && germanVoice) ? germanVoice : null;
-    u.voice = mv || gv || null;
+ if (lang === "en") {
+  let v = (typeof englishVoice !== "undefined" && englishVoice) ? englishVoice : null;
+
+  // Edge: Online (Natural) ignoriert häufig pitch/rate -> versuche Fallback
+  if (v && /Online\s*\(Natural\)/i.test(v.name)) {
+    const voices = speechSynthesis.getVoices();
+
+    // 1) gleiche Sprache, aber NICHT Online (Natural)
+    const fallback =
+      voices.find(x => x.lang === "en-US" && !/Online\s*\(Natural\)/i.test(x.name)) ||
+      voices.find(x => x.lang.startsWith("en") && !/Online\s*\(Natural\)/i.test(x.name)) ||
+      null;
+
+    if (fallback) v = fallback;
   }
 
-  u.pitch = (lang === "en") ? 0.25 : 1.0;
-  u.rate = (lang === "en") ? 0.92 : (slow ? 0.85 : 1.0);
+  u.voice = v;
+} else {
+  const mv = (typeof maleVoice !== "undefined" && maleVoice) ? maleVoice : null;
+  const gv = (typeof germanVoice !== "undefined" && germanVoice) ? germanVoice : null;
+  u.voice = mv || gv || null;
+}
+
+u.pitch = (lang === "en") ? 0.35 : 1.0;
+u.rate  = (lang === "en") ? 0.92 : (slow ? 0.85 : 1.0);
 
   const isGreeting = (STATE === "greet");
 
