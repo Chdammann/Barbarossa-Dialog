@@ -66,6 +66,116 @@ function forceSentenceEnd(text, lang) {
   return t + ".";
 }
 
+/* ===============================
+   WIKIDATA (MINIMAL) – Label + Beschreibung
+   kostenlos, timeout- & cache-gesichert
+================================ */
+
+const WD_CACHE = new Map(); // key -> { ts, data }
+const WD_TTL_MS = 10 * 60 * 1000; // 10 Minuten
+const WD_TIMEOUT_MS = 1800; // 1.8s museum-safe
+
+function wdCacheGet(key) {
+  const hit = WD_CACHE.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.ts > WD_TTL_MS) {
+    WD_CACHE.delete(key);
+    return null;
+  }
+  return hit.data;
+}
+
+function wdCacheSet(key, data) {
+  WD_CACHE.set(key, { ts: Date.now(), data });
+}
+
+async function fetchWithTimeout(url, timeoutMs) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      signal: ctrl.signal,
+      headers: { "User-Agent": "FragFriedrich/1.0 (Museum)" },
+    });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+function cleanQuery(q) {
+  return String(q || "").trim().replace(/\s+/g, " ").slice(0, 140);
+}
+
+// Search -> Entity -> {qid,label,description,url}
+async function getWikidataContext(userText, lang /* "de"|"en" */) {
+  const q = cleanQuery(userText);
+  if (!q) return null;
+
+  const cacheKey = `wdmin:${lang}:${q.toLowerCase()}`;
+  const cached = wdCacheGet(cacheKey);
+  if (cached !== null) return cached; // wir cachen auch null
+
+  // 1) Search
+  const searchUrl =
+    `https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(q)}` +
+    `&language=${encodeURIComponent(lang)}&uselang=${encodeURIComponent(lang)}` +
+    `&format=json&limit=1&origin=*`;
+
+  let qid = null;
+
+  try {
+    const sr = await fetchWithTimeout(searchUrl, WD_TIMEOUT_MS);
+    if (!sr.ok) throw new Error(`wd search http ${sr.status}`);
+    const data = await sr.json();
+    qid = data?.search?.[0]?.id || null;
+  } catch (e) {
+    wdCacheSet(cacheKey, null);
+    return null;
+  }
+
+  if (!qid) {
+    wdCacheSet(cacheKey, null);
+    return null;
+  }
+
+  // 2) Labels + Descriptions
+  const entUrl =
+    `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${encodeURIComponent(qid)}` +
+    `&props=labels|descriptions&languages=${encodeURIComponent(lang)}&format=json&origin=*`;
+
+  try {
+    const rr = await fetchWithTimeout(entUrl, WD_TIMEOUT_MS);
+    if (!rr.ok) throw new Error(`wd entity http ${rr.status}`);
+    const ent = await rr.json();
+
+    const entity = ent?.entities?.[qid];
+    if (!entity) {
+      wdCacheSet(cacheKey, null);
+      return null;
+    }
+
+    const label = entity?.labels?.[lang]?.value || qid;
+    const description = entity?.descriptions?.[lang]?.value || "";
+
+    const result = {
+      qid,
+      label,
+      description,
+      url: `https://www.wikidata.org/wiki/${qid}`,
+    };
+
+    wdCacheSet(cacheKey, result);
+    return result;
+  } catch (e) {
+    wdCacheSet(cacheKey, null);
+    return null;
+  }
+}
+
+/* ===============================
+   /WIKIDATA MINIMAL
+================================ */
+
 // === KI-Antwort auf gesprochene Frage (DE/EN) ===
 app.post("/ask", async (req, res) => {
   try {
@@ -99,16 +209,32 @@ app.post("/ask", async (req, res) => {
     }
     // ⭐⭐⭐ Ende Sonderregel
 
+    // ✅ Wikidata-Minikontext bei JEDER Frage (timeout + cache, darf nie blockieren)
+    const wd = await getWikidataContext(userText, lang);
+
+    const wdBlock = wd
+      ? `Wikidata (${lang.toUpperCase()}): ${wd.label} (${wd.qid})
+Beschreibung: ${wd.description || "—"}
+Quelle: ${wd.url}`
+      : `Wikidata (${lang.toUpperCase()}): Kein Treffer oder Timeout.`;
+
     // 🌐 Prompt dynamisch nach Sprache
     const systemPrompt =
       lang === "en"
-        ? "You are Emperor Frederick Barbarossa, awakened after almost nine centuries in the Kaisersberg at Lautern. Answer in wise, slightly archaic English with small jokes. Add a humorous aside from your loyal ministerial Nikolaus Härtel. Exactly 5 sentences. Always end with a complete sentence."
-        : "Du bist Kaiser Friedrich Barbarossa, der nach fast neunhundert Jahren des Schlummers im Kaiserberg zu Lautern erwacht ist. Antworte weise und leicht altertümlich, mit kleinen Scherzen. Füge eine scherzhafte Bemerkung deines treuen Ministerialen Nikolaus Härtel an. Genau 5 Sätze. Beende immer mit einem vollständigen Satz.";
+        ? "You are Emperor Frederick Barbarossa, awakened after almost nine centuries in the Kaisersberg at Lautern. Answer in wise, slightly archaic English with small jokes. Add a humorous aside from your loyal minister Nikolaus Härtel. Exactly 5 sentences. Always end with a complete sentence."
+        : "Du bist Kaiser Friedrich Barbarossa, der nach fast neunhundert Jahren des Schlummers im Kaiserberg zu Lautern erwacht ist. Antworte weise und leicht altertümlich, mit kleinen Scherzen. Füge eine scherzhafte Bemerkung deines treuen Minister Nikolaus Härtel an. Genau 5 Sätze. Beende immer mit einem vollständigen Satz.";
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         { role: "system", content: systemPrompt },
+        {
+          role: "system",
+          content:
+            "Nutze die folgende Wikidata-Quelle als Faktenbasis, wenn sie relevant ist. " +
+            "Wenn sie nicht passt oder unklar ist, sag das kurz.\n\n" +
+            wdBlock,
+        },
         { role: "user", content: userText },
       ],
       temperature: 0.8,
@@ -135,4 +261,3 @@ app.use((req, res) => {
 app.listen(PORT, () => {
   console.log(`✅ Server läuft auf Port ${PORT}`);
 });
-
