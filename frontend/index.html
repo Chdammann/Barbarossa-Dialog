@@ -952,7 +952,7 @@ function startInteraction() {
     listeningFinished = false;
 
     speak(
-      "Seid gegrüßt, mein Freund. Ich bin Friedrich Barbarossa, nach fast neunhundert Jahren im Kaiserberg zu Lautern erwacht. Was ist Euer Begehr? If ju wonnt, ju kenn ask ollso in inglisch.",
+      "Seid gegrüßt, mein Freund. Ich bin Friedrich Barbarossa, nach fast neunhundert Jahren im Kaiserberg zu Lautern erwacht. Was ist Euer Begehr? If ju wonnt, ju kenn ollso ask in inglisch.",
       false,
       "de",
       () => { try { showHint("Kurz Knopf drücken, dann fragen"); } catch (e) {} }
@@ -1017,7 +1017,7 @@ function startInteraction() {
         console.warn("⚠️ Recognition start fehlgeschlagen – Fallback auf greet");
         STATE = "greet";
         resetMovements();
-        try { showHint("Kurz Knopf drücken, dann fragen"); } catch (e) {}
+        try { showHint("Kurz Knopf drücken, dann in einem kurzen, vollständigen Satz fragen"); } catch (e) {}
       }
     }, 900);
 
@@ -1104,7 +1104,7 @@ function museumReset(reason = "") {
   }
 
   // ✅ Hinweistext nach Reset anzeigen
-  showHint("Kurz Knopf drücken, dann fragen");
+  showHint("Kurz Knopf drücken, dann in einem kurzen, vollständigen Satz fragen");
 
   console.log("🟢 Museum-Reset abgeschlossen");
 }
@@ -1288,7 +1288,7 @@ u.rate  = (lang === "en") ? 0.92 : (slow ? 0.85 : 1.0);
     setTimeout(() => { mouthCooldown = false; }, 120);
 
     if (STATE === "greet") {
-      if (typeof showHint === "function") showHint("Kurz Knopf drücken, dann fragen");
+      if (typeof showHint === "function") showHint("Kurz Knopf drücken, dann in einem kurzen, vollständigen Satz fragen");
     }
 
     if (STATE === "answer") {
