@@ -350,29 +350,32 @@ function resetMovements() {
 }
 
  // ===============================
-// detectLanguage – GLOBAL (ROBUST v3)
-// Deutsch gewinnt bei Tie. Englisch nur bei klaren EN-Signalen.
+// detectLanguage – GLOBAL (ROBUST v4: "was" = DE, stabile Fragewort-Regeln)
 // ===============================
 function detectLanguage(text) {
   const t0 = String(text || "").trim();
   if (!t0) return "de";
-
   const t = t0.toLowerCase();
 
-  // Harte DE-Indikatoren
+  // harte DE-Indikatoren
   if (/[äöüß]/.test(t0)) return "de";
 
-  // Harte EN-Indikatoren (wenn das drin ist, ist es praktisch immer Englisch)
+  // harte DE-Fragewörter am Satzanfang (entscheidend für Museum)
+  if (/^(was|wer|wen|wem|wessen|wie|wo|wohin|woher|wann|warum|wieso|weshalb)\b/.test(t)) {
+    return "de";
+  }
+
+  // harte EN-Indikatoren
   if (/\b(what|why|where|when|who|which|how|please)\b/.test(t)) return "en";
   if (/\b(i'm|you're|we're|they're|don't|can't|won't|it's)\b/.test(t)) return "en";
 
-  // Tokenize
+  // tokenisieren
   const tokens = t.split(/[^a-zA-Zäöüß]+/).filter(Boolean);
 
-  // DE/EN Wortlisten ohne überlappende Miniwörter (in/on/at etc.)
+  // bewusst: KEIN "was" im EN-Set, weil das im Deutschen extrem häufig ist
   const en = new Set([
     "the","a","an","and","or","but",
-    "is","are","was","were","do","does","did",
+    "is","are","were","do","does","did",
     "have","has","had","can","could","would","should","will","shall","may","might","must",
     "tell","explain","describe","show","give","talk","say","speak","think","know","mean",
     "about","history","life","death","war","battle","empire","king","emperor","rome","roman",
@@ -382,6 +385,7 @@ function detectLanguage(text) {
 
   const de = new Set([
     "der","die","das","und","oder","aber",
+    "was","wer","wie","wo","wann","warum","wieso","weshalb",
     "ist","sind","war","waren","bin","bist","seid",
     "ich","du","ihr","wir","sie","er","es","mein","dein","euer",
     "nicht","kein","keine","einen","eine","einem","einer",
@@ -399,15 +403,12 @@ function detectLanguage(text) {
     if (de.has(w)) d++;
   }
 
-  // Endungs-Boni
+  // Endungen (leicht)
   if (/\b(ing|tion|ment|ness|ship|able)\b/.test(t)) e += 2;
   if (/\b(ung|keit|heit|chen|lein|schaft)\b/.test(t)) d += 2;
 
   if (e > d) return "en";
-  if (d > e) return "de";
-
-  // Tie → DE (Museum-Default)
-  return "de";
+  return "de"; // Tie + Default: DE (Museum)
 }
  // ===============================
 // HINT-FUNKTIONEN (TEXT EIN-/AUSBLENDEN) – FIXED
