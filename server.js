@@ -66,6 +66,26 @@ function forceSentenceEnd(text, lang) {
   return t + ".";
 }
 
+// ✅ NEU: Server entscheidet Sprache aus dem Text (stoppt "sticky en")
+function detectLanguageServer(text) {
+  const t0 = String(text || "").trim();
+  if (!t0) return null;
+  const t = t0.toLowerCase();
+
+  // harte DE-Indikatoren
+  if (/[äöüß]/.test(t0)) return "de";
+  if (/^(was|wer|wen|wem|wessen|wie|wo|wohin|woher|wann|warum|wieso|weshalb)\b/.test(t)) return "de";
+  if (/\b(der|die|das|und|oder|aber|nicht|kein|kaiser|reich|kirche|kreuzzug)\b/.test(t)) return "de";
+
+  // harte EN-Indikatoren
+  if (/^(what|why|where|when|who|whom|whose|which|how)\b/.test(t)) return "en";
+  if (/\b(i'm|you're|we're|they're|don't|can't|won't|it's)\b/.test(t)) return "en";
+  if (/\b(the|and|or|but|history|empire|emperor|king|battle|crusade)\b/.test(t)) return "en";
+
+  // unklar
+  return null;
+}
+
 /* ===============================
    WIKIDATA (MINIMAL) – Label + Beschreibung
    kostenlos, timeout- & cache-gesichert
@@ -106,7 +126,7 @@ function cleanQuery(q) {
   return String(q || "").trim().replace(/\s+/g, " ").slice(0, 140);
 }
 
-// ✅ NEU: aus einer ganzen Frage eine "Entitäts-Query" ableiten (trefferstärker)
+// ✅ aus einer ganzen Frage eine "Entitäts-Query" ableiten (trefferstärker)
 function toEntityQuery(userText, lang) {
   const t = String(userText || "")
     .toLowerCase()
@@ -140,7 +160,6 @@ function toEntityQuery(userText, lang) {
   const stop = (lang === "en") ? stopEn : stopDe;
 
   const words = t.split(" ").filter(w => w && !stop.has(w));
-  // nimm die ersten 6 "inhaltlichen" Tokens als Query
   return words.slice(0, 6).join(" ").slice(0, 80);
 }
 
@@ -149,7 +168,7 @@ async function getWikidataContext(userText, lang /* "de"|"en" */) {
   const qRaw = cleanQuery(userText);
   if (!qRaw) return null;
 
-  const q = toEntityQuery(qRaw, lang) || qRaw; // fallback: original, falls extraction leer
+  const q = toEntityQuery(qRaw, lang) || qRaw;
   const cacheKey = `wdmin:${lang}:${q.toLowerCase()}`;
 
   const cached = wdCacheGet(cacheKey);
@@ -220,15 +239,20 @@ async function getWikidataContext(userText, lang /* "de"|"en" */) {
 app.post("/ask", async (req, res) => {
   try {
     const userTextRaw = req.body?.text;
-    const lang = normalizeLang(req.body?.lang);
+    const langClient = normalizeLang(req.body?.lang);
 
     const userText = String(userTextRaw || "").trim();
-    console.log("🎙️ Eingabe vom Benutzer:", userText, "Sprache:", lang);
+
+    // ✅ Sprache pro Request aus Text bestimmen (Client nur Fallback)
+    const langFromText = detectLanguageServer(userText);
+    const langUsed = langFromText || langClient || "de";
+
+    console.log("🎙️ Eingabe vom Benutzer:", userText, "Sprache:", langUsed);
 
     if (!userText) {
       return res.json({
         answer:
-          lang === "en"
+          langUsed === "en"
             ? "I heard nothing clearly. Please ask again."
             : "Ich habe Euch nicht deutlich vernommen. Bitte fragt erneut.",
       });
@@ -241,7 +265,7 @@ app.post("/ask", async (req, res) => {
 
     if (mentionsAfd) {
       const answer =
-        lang === "en"
+        langUsed === "en"
           ? "You name a party of your time and its quarrels. I, Frederick Barbarossa, will not judge modern factions from my ancient throne. My loyal minister Nikolaus Härtel mutters that such disputes age a man faster than any crusade, and I cannot wholly disagree. Ask me rather of empire, law, or the old tales of the Kaiserberg. Let this be my final word on that matter."
           : "Ihr nennt eine Partei Eurer Zeit und ihre Händel. Ich, Friedrich Barbarossa, richte nicht über die modernen Fraktionen von meinem alten Thron herab. Mein treuer Minister Nikolaus Härtel murrt, solcher Streit lasse einen schneller altern als ein Kreuzzug, und ich kann ihm kaum widersprechen. Fragt mich lieber nach Reich, Recht oder den alten Geschichten des Kaiserbergs. Dies sei mein abschließendes Wort zu diesem Thema.";
 
@@ -250,23 +274,23 @@ app.post("/ask", async (req, res) => {
     // ⭐⭐⭐ Ende Sonderregel
 
     // ✅ Wikidata-Minikontext bei JEDER Frage (timeout + cache, darf nie blockieren)
-    const wd = await getWikidataContext(userText, lang);
+    const wd = await getWikidataContext(userText, langUsed);
 
     const wdBlock = wd
-      ? `Wikidata (${lang.toUpperCase()}): ${wd.label} (${wd.qid})
+      ? `Wikidata (${langUsed.toUpperCase()}): ${wd.label} (${wd.qid})
 Beschreibung: ${wd.description || "—"}
 Quelle: ${wd.url}`
-      : `Wikidata (${lang.toUpperCase()}): Kein Treffer oder Timeout.`;
+      : `Wikidata (${langUsed.toUpperCase()}): Kein Treffer oder Timeout.`;
 
     // 🌐 Prompt dynamisch nach Sprache
     const systemPrompt =
-      lang === "en"
+      langUsed === "en"
         ? "You are Emperor Frederick Barbarossa, awakened after almost nine centuries in the Kaisersberg at Lautern. Answer in wise, slightly archaic English with small jokes. Add a humorous aside from your loyal ministerial Nikolaus Härtel. Exactly 5 sentences. Always end with a complete sentence."
         : "Du bist Kaiser Friedrich Barbarossa, der nach fast neunhundert Jahren des Schlummers im Kaiserberg zu Lautern erwacht ist. Antworte weise und leicht altertümlich, mit kleinen Scherzen. Füge eine scherzhafte Bemerkung deines treuen Minister Nikolaus Härtel an. Genau 5 Sätze. Beende immer mit einem vollständigen Satz.";
 
-    // ✅ Anti-Halluzination (OHNE harte Notbremse): wenn Wikidata fehlt/unklar ist, vorsichtig bleiben
+    // ✅ Anti-Halluzination: vorsichtig bleiben, wenn Wikidata unklar ist
     const groundingRule =
-      lang === "en"
+      langUsed === "en"
         ? "Use the provided Wikidata snippet only if it clearly matches the question. If it is empty, unrelated, or unclear, do NOT invent specific facts (dates, names, places). You may answer in general terms and ask for clarification (name/place/year) if needed. Never fabricate historical details."
         : "Nutze den folgenden Wikidata-Auszug nur, wenn er klar zur Frage passt. Wenn er leer, unpassend oder unklar ist, erfinde KEINE konkreten Fakten (Daten, Namen, Orte). Du darfst allgemein antworten und um Präzisierung (Name/Ort/Jahr) bitten, falls nötig. Erfinde niemals historische Details.";
 
@@ -289,7 +313,7 @@ Quelle: ${wd.url}`
     });
 
     let answer = completion?.choices?.[0]?.message?.content || "";
-    answer = forceSentenceEnd(answer, lang);
+    answer = forceSentenceEnd(answer, langUsed);
 
     console.log("💬 KI-Antwort:", answer);
     res.json({ answer });
