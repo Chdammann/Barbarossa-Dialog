@@ -694,8 +694,8 @@ function animate() {
 let recognition = null;
 let heardSomething = false;
 
-// detectedLanguage bleibt bestehen für TTS-Fallback,
-// aber wir "nageln" damit NICHT mehr die Antwortsprache fest.
+// detectedLanguage bleibt bestehen für Recognition.lang (Engine-Hilfe),
+// aber steuert NICHT mehr die Antwortsprache.
 let detectedLanguage = "de";
 
 let _recHandlersBound = false;
@@ -728,8 +728,8 @@ function ensureRecognition() {
 
       lastTranscript = res;
 
-      // Optional: lokale Detektion nur als Fallback für Recognition.lang / TTS,
-      // aber NICHT mehr als harte Antwort-Sprachsteuerung.
+      // Optional: lokale Detektion nur als Hint für Recognition.lang,
+      // NICHT mehr als harte Antwort-Sprachsteuerung.
       detectedLanguage =
         (typeof detectLanguage === "function")
           ? detectLanguage(res)
@@ -771,54 +771,53 @@ function ensureRecognition() {
 
       speak("Ähm … einen Moment bitte.", true);
 
-     // ✅ WICHTIG:
-// - KEINE Sprachinstruktion mehr in den Text kleben
-// - KEIN lang mehr schicken (Server entscheidet pro Request)
-fetch("/ask", {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    text: lastTranscript
-  })
-})
-.then(r => r.json())
-.then(data => {
-  const waitForThinkEnd = setInterval(() => {
-    if (!talking) {
-      clearInterval(waitForThinkEnd);
+      // ✅ WICHTIG:
+      // - KEINE Sprachinstruktion mehr in den Text kleben
+      // - KEIN lang mehr schicken (Server entscheidet pro Request)
+      fetch("/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: lastTranscript
+        })
+      })
+      .then(r => r.json())
+      .then(data => {
+        const waitForThinkEnd = setInterval(() => {
+          if (!talking) {
+            clearInterval(waitForThinkEnd);
 
-      STATE = "answer";
-      resetMovements();
+            STATE = "answer";
+            resetMovements();
 
-      rising = true;
-      riseStartTime = performance.now();
+            rising = true;
+            riseStartTime = performance.now();
 
-      // ✅ Sprache NUR aus Serverantwort
-      let answerLang = "de"; // Museums-Default
+            // ✅ Sprache NUR aus Serverantwort
+            let answerLang = "de"; // Museums-Default
+            if (data && (data.answerLang === "en" || data.answerLang === "de")) {
+              answerLang = data.answerLang;
+            }
 
-      if (data && (data.answerLang === "en" || data.answerLang === "de")) {
-        answerLang = data.answerLang;
-      }
+            speak(data.answer, false, answerLang);
+          }
+        }, 120);
+      })
+      .catch(() => {
+        STATE = "answer";
+        resetMovements();
 
-      speak(data.answer, false, answerLang);
-    }
-  }, 120);
-})
-.catch(() => {
-  STATE = "answer";
-  resetMovements();
+        // stabiler Default (keine Alt-Variable mehr verwenden)
+        speak(
+          "Verzeiht, ich habe Euch nicht recht verstanden.",
+          false,
+          "de"
+        );
+      });
+    };
+  }
 
-  // stabiler Default (keine Alt-Variable mehr verwenden)
-  speak(
-    "Verzeiht, ich habe Euch nicht recht verstanden.",
-    false,
-    "de"
-  );
-});
-};
-}
-
-return recognition;
+  return recognition;
 }
 
 function startRecognition() {
@@ -829,8 +828,8 @@ function startRecognition() {
     return;
   }
 
-  // Recognition-Sprache weiterhin nach zuletzt vermuteter Sprache setzen (hilft Engine),
-  // aber sie steuert NICHT mehr die Antwortsprache.
+  // Recognition-Sprache nach zuletzt vermuteter Sprache setzen (hilft Engine),
+  // aber steuert NICHT mehr die Antwortsprache.
   r.lang = (detectedLanguage === "en") ? "en-US" : "de-DE";
   _recSessionId++;
 
@@ -1154,50 +1153,51 @@ document.addEventListener("visibilitychange", () => {
 });
   
 /* -----------------------------
-   SPEAK – FINAL (VISEME-STABIL) – FIXED v2
-   (NO CUT-OFF: failsafe großzügig + cancelt nur wenn wirklich speaking)
+   SPEAK – FINAL (VISEME-STABIL) – FIXED v3
+   (SERVER LANG PRIO + EN PITCH 0.6 + cancelt nur wenn speaking/pending)
 ----------------------------- */
 function speak(text, slow = false, forceLang = null, onEnd = null) {
 
-  // Queue leeren (gegen Chrome-Stacking)
+  // Queue nur leeren, wenn wirklich noch etwas läuft (reduziert Cut-offs)
   try {
-    if (window.speechSynthesis && typeof speechSynthesis.cancel === "function") {
+    if (window.speechSynthesis && (speechSynthesis.speaking || speechSynthesis.pending)) {
       speechSynthesis.cancel();
     }
   } catch (e) {}
 
   const u = new SpeechSynthesisUtterance(text);
 
-  // Sprache bestimmen
-  const lang = forceLang ? forceLang : (detectedLanguage || "de");
+  // Sprache bestimmen: forceLang (vom Server) hat Priorität, sonst museum-default "de"
+  const lang = (forceLang === "en") ? "en" : "de";
   u.lang = (lang === "en") ? "en-US" : "de-DE";
 
   // Stimme setzen (DE: maleVoice priorisiert)
- if (lang === "en") {
-  let v = (typeof englishVoice !== "undefined" && englishVoice) ? englishVoice : null;
+  if (lang === "en") {
+    let v = (typeof englishVoice !== "undefined" && englishVoice) ? englishVoice : null;
 
-  // Edge: Online (Natural) ignoriert häufig pitch/rate -> versuche Fallback
-  if (v && /Online\s*\(Natural\)/i.test(v.name)) {
-    const voices = speechSynthesis.getVoices();
+    // Edge: Online (Natural) ignoriert häufig pitch/rate -> versuche Fallback
+    if (v && /Online\s*\(Natural\)/i.test(v.name)) {
+      const voices = speechSynthesis.getVoices();
 
-    // 1) gleiche Sprache, aber NICHT Online (Natural)
-    const fallback =
-      voices.find(x => x.lang === "en-US" && !/Online\s*\(Natural\)/i.test(x.name)) ||
-      voices.find(x => x.lang.startsWith("en") && !/Online\s*\(Natural\)/i.test(x.name)) ||
-      null;
+      // 1) gleiche Sprache, aber NICHT Online (Natural)
+      const fallback =
+        voices.find(x => x.lang === "en-US" && !/Online\s*\(Natural\)/i.test(x.name)) ||
+        voices.find(x => (x.lang || "").startsWith("en") && !/Online\s*\(Natural\)/i.test(x.name)) ||
+        null;
 
-    if (fallback) v = fallback;
+      if (fallback) v = fallback;
+    }
+
+    u.voice = v;
+  } else {
+    const mv = (typeof maleVoice !== "undefined" && maleVoice) ? maleVoice : null;
+    const gv = (typeof germanVoice !== "undefined" && germanVoice) ? germanVoice : null;
+    u.voice = mv || gv || null;
   }
 
-  u.voice = v;
-} else {
-  const mv = (typeof maleVoice !== "undefined" && maleVoice) ? maleVoice : null;
-  const gv = (typeof germanVoice !== "undefined" && germanVoice) ? germanVoice : null;
-  u.voice = mv || gv || null;
-}
-
-u.pitch = (lang === "en") ? 0.2 : 1.0;
-u.rate  = (lang === "en") ? 0.92 : (slow ? 0.85 : 1.0);
+  // Pitch/Rate
+  u.pitch = (lang === "en") ? 0.6 : 1.0;
+  u.rate  = (lang === "en") ? 0.92 : (slow ? 0.85 : 1.0);
 
   const isGreeting = (STATE === "greet");
 
@@ -1305,7 +1305,9 @@ u.rate  = (lang === "en") ? 0.92 : (slow ? 0.85 : 1.0);
     setTimeout(() => { mouthCooldown = false; }, 120);
 
     if (STATE === "greet") {
-      if (typeof showHint === "function") showHint("Kurz Knopf drücken, dann in einem kurzen, vollständigen Satz fragen");
+      if (typeof showHint === "function") {
+        showHint("Kurz Knopf drücken, dann in einem kurzen, vollständigen Satz fragen");
+      }
     }
 
     if (STATE === "answer") {
