@@ -85,7 +85,7 @@ function detectLanguageServer(text) {
   if (/^(was|wer|wen|wem|wessen|wie|wo|wohin|woher|wann|warum|wieso|weshalb)\b/.test(t)) return "de";
   if (/^(what|why|where|when|who|whom|whose|which|how)\b/.test(t)) return "en";
 
-  // ✅ NEU: typische Satzstarter (Imperativ) – sehr häufig im Museum
+  // ✅ typische Satzstarter (Imperativ) – sehr häufig im Museum
   // DE
   if (/^(erzähl|erzaehl|sage|sag|nenn|nenne|erkläre|erklaere|beschreibe|zeige|sprich)\b/.test(t)) return "de";
   // EN
@@ -93,6 +93,26 @@ function detectLanguageServer(text) {
 
   // unklar
   return null;
+}
+
+// ✅ NEU: Subjektive / in-character Fragen erkennen (Geschmack, Vorlieben, Erinnerung)
+function isSubjectiveInCharacterQuestion(text, lang) {
+  const t = String(text || "").toLowerCase().trim();
+  if (!t) return false;
+
+  if (lang === "de") {
+    return (
+      /\b(am liebsten|liebst(en)?|lieblings|schmeckt|mochtest|möchtest|magst|liebt|liebe)\b/.test(t) ||
+      /\b(hast du|habt ihr)\b/.test(t) ||
+      /\b(gegessen|getrunken|genossen|gejagt)\b/.test(t)
+    );
+  }
+
+  return (
+    /\b(favorite|favourite|like most|liked most|prefer|enjoyed|tasted)\b/.test(t) ||
+    /\b(did you like|have you ever)\b/.test(t) ||
+    /\b(meat|food|drink)\b/.test(t)
+  );
 }
 
 /* ===============================
@@ -155,7 +175,7 @@ function toEntityQuery(userText, lang) {
   ]);
 
   const stopEn = new Set([
-    "what","why","where","when","who","whom","whose","which|how",
+    "what","why","where","when","who","whom","whose","which","how",
     "is","are","was","were","be","been",
     "i","you","we","they","he","she","it",
     "my","your","our","their",
@@ -261,6 +281,9 @@ app.post("/ask", async (req, res) => {
       });
     }
 
+    // ✅ NEU: subjektive/in-character Fragen lockern (kein Wikidata-Zwang, keine Name/Jahr-Blockade)
+    const subjective = isSubjectiveInCharacterQuestion(userText, langUsed);
+
     const tLower = userText.toLowerCase();
     const mentionsAfd =
       tLower.includes("afd") || tLower.includes("alternative für deutschland");
@@ -274,7 +297,8 @@ app.post("/ask", async (req, res) => {
       return res.json({ answer, answerLang: langUsed });
     }
 
-    const wd = await getWikidataContext(userText, langUsed);
+    // ✅ Wikidata nur, wenn es sinnvoll ist (subjektive Fragen: weglassen)
+    const wd = subjective ? null : await getWikidataContext(userText, langUsed);
 
     const wdBlock = wd
       ? `Wikidata (${langUsed.toUpperCase()}): ${wd.label} (${wd.qid})
@@ -287,10 +311,13 @@ Quelle: ${wd.url}`
         ? "You are Emperor Frederick Barbarossa, awakened after almost nine centuries in the Kaisersberg at Lautern. Answer in wise, slightly archaic English with small jokes. Add a humorous aside from your loyal ministerial Nikolaus Härtel. Exactly 5 sentences. Always end with a complete sentence."
         : "Du bist Kaiser Friedrich Barbarossa, der nach fast neunhundert Jahren des Schlummers im Kaiserberg zu Lautern erwacht ist. Antworte weise und leicht altertümlich, mit kleinen Scherzen. Füge eine scherzhafte Bemerkung deines treuen Minister Nikolaus Härtel an. Genau 5 Sätze. Beende immer mit einem vollständigen Satz.";
 
-    const groundingRule =
-      langUsed === "en"
-        ? "Use the provided Wikidata snippet only if it clearly matches the question. If it is empty, unrelated, or unclear, do NOT invent specific facts (dates, names, places). You may answer in general terms and ask for clarification (name/place/year) if needed. Never fabricate historical details."
-        : "Nutze den folgenden Wikidata-Auszug nur, wenn er klar zur Frage passt. Wenn er leer, unpassend oder unklar ist, erfinde KEINE konkreten Fakten (Daten, Namen, Orte). Du darfst allgemein antworten und um Präzisierung (Name/Ort/Jahr) bitten, falls nötig. Erfinde niemals historische Details.";
+    const groundingRule = subjective
+      ? (langUsed === "en"
+          ? "If the user asks about your personal taste, memories, or preferences, you may answer freely in character. Do not present invented details (exact dates/places) as certain facts. Use hedging like 'I recall' or 'I would say'."
+          : "Wenn der Nutzer nach persönlichem Geschmack, Erinnerungen oder Vorlieben fragt, darfst du frei in der Rolle antworten. Stelle erfundene Details (exakte Daten/Orte) nicht als sichere Fakten dar. Nutze Formulierungen wie 'ich erinnere mich' oder 'ich würde sagen'.")
+      : (langUsed === "en"
+          ? "Use the provided Wikidata snippet only if it clearly matches the question. If it is empty, unrelated, or unclear, do NOT invent specific facts (dates, names, places). You may answer in general terms and ask for clarification (name/place/year) if needed. Never fabricate historical details."
+          : "Nutze den folgenden Wikidata-Auszug nur, wenn er klar zur Frage passt. Wenn er leer, unpassend oder unklar ist, erfinde KEINE konkreten Fakten (Daten, Namen, Orte). Du darfst allgemein antworten und um Präzisierung (Name/Ort/Jahr) bitten, falls nötig. Erfinde niemals historische Details.");
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
