@@ -688,11 +688,14 @@ function animate() {
   
 /* -----------------------------
    STATE MACHINE – RECOGNITION
-   MIT THINK-PHASE (WAKE-SICHER) – FIXED v2 (FORCE EN ANSWERS)
+   MIT THINK-PHASE (WAKE-SICHER) – FIXED v3 (SERVER DECIDES LANGUAGE)
 ----------------------------- */
 
 let recognition = null;
 let heardSomething = false;
+
+// detectedLanguage bleibt bestehen für TTS-Fallback,
+// aber wir "nageln" damit NICHT mehr die Antwortsprache fest.
 let detectedLanguage = "de";
 
 let _recHandlersBound = false;
@@ -724,7 +727,14 @@ function ensureRecognition() {
       if (!res || res.trim().length < 2) return;
 
       lastTranscript = res;
-      detectedLanguage = (typeof detectLanguage === "function") ? detectLanguage(res) : "de";
+
+      // Optional: lokale Detektion nur als Fallback für Recognition.lang / TTS,
+      // aber NICHT mehr als harte Antwort-Sprachsteuerung.
+      detectedLanguage =
+        (typeof detectLanguage === "function")
+          ? detectLanguage(res)
+          : "de";
+
       heardSomething = true;
     };
 
@@ -761,18 +771,14 @@ function ensureRecognition() {
 
       speak("Ähm … einen Moment bitte.", true);
 
-      // ✅ Sprachinstruktion hart ergänzen (falls Server `lang` ignoriert)
-      const promptText =
-        (detectedLanguage === "en")
-          ? `${lastTranscript}\n\nPlease answer in English.`
-          : `${lastTranscript}\n\nBitte antworte auf Deutsch.`;
-
+      // ✅ WICHTIG:
+      // - KEINE Sprachinstruktion mehr in den Text kleben
+      // - KEIN lang mehr schicken (Server entscheidet pro Request)
       fetch("/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          text: promptText,
-          lang: detectedLanguage
+          text: lastTranscript
         })
       })
       .then(r => r.json())
@@ -787,8 +793,14 @@ function ensureRecognition() {
             rising = true;
             riseStartTime = performance.now();
 
-            // Sprache für TTS passend erzwingen
-            speak(data.answer, false, detectedLanguage);
+            // ✅ Sprache für TTS aus Serverantwort nehmen (falls vorhanden),
+            // sonst detectedLanguage als Fallback.
+            const answerLang =
+              (data && (data.answerLang === "en" || data.answerLang === "de"))
+                ? data.answerLang
+                : detectedLanguage;
+
+            speak(data.answer, false, answerLang);
           }
         }, 120);
       })
@@ -815,6 +827,8 @@ function startRecognition() {
     return;
   }
 
+  // Recognition-Sprache weiterhin nach zuletzt vermuteter Sprache setzen (hilft Engine),
+  // aber sie steuert NICHT mehr die Antwortsprache.
   r.lang = (detectedLanguage === "en") ? "en-US" : "de-DE";
   _recSessionId++;
 
