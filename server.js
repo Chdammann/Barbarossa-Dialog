@@ -66,23 +66,28 @@ function forceSentenceEnd(text, lang) {
   return t + ".";
 }
 
-// ✅ NEU: Server entscheidet Sprache aus dem Text (stoppt "sticky en")
+// ✅ NEU (ROBUST): Sprache primär über Satzanfang (Fragewörter) bestimmen
 function detectLanguageServer(text) {
   const t0 = String(text || "").trim();
   if (!t0) return null;
-  const t = t0.toLowerCase();
+
+  // Normalisieren: nur Buchstaben/Zahlen/Leerzeichen am Anfang berücksichtigen
+  const t = t0
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s-]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!t) return null;
 
   // harte DE-Indikatoren
   if (/[äöüß]/.test(t0)) return "de";
+
+  // harte Satzanfang-Regeln (die müssen sitzen)
   if (/^(was|wer|wen|wem|wessen|wie|wo|wohin|woher|wann|warum|wieso|weshalb)\b/.test(t)) return "de";
-  if (/\b(der|die|das|und|oder|aber|nicht|kein|kaiser|reich|kirche|kreuzzug)\b/.test(t)) return "de";
-
-  // harte EN-Indikatoren
   if (/^(what|why|where|when|who|whom|whose|which|how)\b/.test(t)) return "en";
-  if (/\b(i'm|you're|we're|they're|don't|can't|won't|it's)\b/.test(t)) return "en";
-  if (/\b(the|and|or|but|history|empire|emperor|king|battle|crusade)\b/.test(t)) return "en";
 
-  // unklar
+  // wenn kein klares Fragewort am Anfang: unklar
   return null;
 }
 
@@ -126,7 +131,6 @@ function cleanQuery(q) {
   return String(q || "").trim().replace(/\s+/g, " ").slice(0, 140);
 }
 
-// ✅ aus einer ganzen Frage eine "Entitäts-Query" ableiten (trefferstärker)
 function toEntityQuery(userText, lang) {
   const t = String(userText || "")
     .toLowerCase()
@@ -163,7 +167,6 @@ function toEntityQuery(userText, lang) {
   return words.slice(0, 6).join(" ").slice(0, 80);
 }
 
-// Search -> Entity -> {qid,label,description,url}
 async function getWikidataContext(userText, lang /* "de"|"en" */) {
   const qRaw = cleanQuery(userText);
   if (!qRaw) return null;
@@ -174,7 +177,6 @@ async function getWikidataContext(userText, lang /* "de"|"en" */) {
   const cached = wdCacheGet(cacheKey);
   if (cached !== null) return cached; // wir cachen auch null
 
-  // 1) Search
   const searchUrl =
     `https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(q)}` +
     `&language=${encodeURIComponent(lang)}&uselang=${encodeURIComponent(lang)}` +
@@ -197,7 +199,6 @@ async function getWikidataContext(userText, lang /* "de"|"en" */) {
     return null;
   }
 
-  // 2) Labels + Descriptions
   const entUrl =
     `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${encodeURIComponent(qid)}` +
     `&props=labels|descriptions&languages=${encodeURIComponent(lang)}&format=json&origin=*`;
@@ -243,7 +244,7 @@ app.post("/ask", async (req, res) => {
 
     const userText = String(userTextRaw || "").trim();
 
-    // ✅ Sprache pro Request aus Text bestimmen (Client nur Fallback)
+    // ✅ Sprache pro Request: erst Satzanfang-Regel, sonst Client-Fallback
     const langFromText = detectLanguageServer(userText);
     const langUsed = langFromText || langClient || "de";
 
@@ -273,7 +274,6 @@ app.post("/ask", async (req, res) => {
     }
     // ⭐⭐⭐ Ende Sonderregel
 
-    // ✅ Wikidata-Minikontext bei JEDER Frage (timeout + cache, darf nie blockieren)
     const wd = await getWikidataContext(userText, langUsed);
 
     const wdBlock = wd
@@ -282,13 +282,11 @@ Beschreibung: ${wd.description || "—"}
 Quelle: ${wd.url}`
       : `Wikidata (${langUsed.toUpperCase()}): Kein Treffer oder Timeout.`;
 
-    // 🌐 Prompt dynamisch nach Sprache
     const systemPrompt =
       langUsed === "en"
         ? "You are Emperor Frederick Barbarossa, awakened after almost nine centuries in the Kaisersberg at Lautern. Answer in wise, slightly archaic English with small jokes. Add a humorous aside from your loyal ministerial Nikolaus Härtel. Exactly 5 sentences. Always end with a complete sentence."
         : "Du bist Kaiser Friedrich Barbarossa, der nach fast neunhundert Jahren des Schlummers im Kaiserberg zu Lautern erwacht ist. Antworte weise und leicht altertümlich, mit kleinen Scherzen. Füge eine scherzhafte Bemerkung deines treuen Minister Nikolaus Härtel an. Genau 5 Sätze. Beende immer mit einem vollständigen Satz.";
 
-    // ✅ Anti-Halluzination: vorsichtig bleiben, wenn Wikidata unklar ist
     const groundingRule =
       langUsed === "en"
         ? "Use the provided Wikidata snippet only if it clearly matches the question. If it is empty, unrelated, or unclear, do NOT invent specific facts (dates, names, places). You may answer in general terms and ask for clarification (name/place/year) if needed. Never fabricate historical details."
