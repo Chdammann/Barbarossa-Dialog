@@ -106,12 +106,52 @@ function cleanQuery(q) {
   return String(q || "").trim().replace(/\s+/g, " ").slice(0, 140);
 }
 
+// ✅ NEU: aus einer ganzen Frage eine "Entitäts-Query" ableiten (trefferstärker)
+function toEntityQuery(userText, lang) {
+  const t = String(userText || "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s-]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!t) return "";
+
+  const stopDe = new Set([
+    "wer","wen","wem","wessen","was","wie","wo","wohin","woher","wann","warum","wieso","weshalb",
+    "ist","sind","war","waren","sei","seid","bin","bist",
+    "ich","du","ihr","wir","sie","er","es",
+    "mein","dein","euer","unser",
+    "bitte","danke",
+    "erkläre","erzähle","beschreibe","zeige","sage","sprich","nenn","nenne",
+    "der","die","das","ein","eine","einen","einem","einer","und","oder","aber","zu","zum","zur",
+    "im","in","am","an","auf","mit","ohne","von","für","über","nach","vor"
+  ]);
+
+  const stopEn = new Set([
+    "what","why","where","when","who","whom","whose","which","how",
+    "is","are","was","were","be","been",
+    "i","you","we","they","he","she","it",
+    "my","your","our","their",
+    "please","thanks","thank",
+    "tell","explain","describe","show","say","speak","name",
+    "the","a","an","and","or","but","to","in","on","at","with","without","from","about","after","before"
+  ]);
+
+  const stop = (lang === "en") ? stopEn : stopDe;
+
+  const words = t.split(" ").filter(w => w && !stop.has(w));
+  // nimm die ersten 6 "inhaltlichen" Tokens als Query
+  return words.slice(0, 6).join(" ").slice(0, 80);
+}
+
 // Search -> Entity -> {qid,label,description,url}
 async function getWikidataContext(userText, lang /* "de"|"en" */) {
-  const q = cleanQuery(userText);
-  if (!q) return null;
+  const qRaw = cleanQuery(userText);
+  if (!qRaw) return null;
 
+  const q = toEntityQuery(qRaw, lang) || qRaw; // fallback: original, falls extraction leer
   const cacheKey = `wdmin:${lang}:${q.toLowerCase()}`;
+
   const cached = wdCacheGet(cacheKey);
   if (cached !== null) return cached; // wir cachen auch null
 
@@ -224,21 +264,11 @@ Quelle: ${wd.url}`
         ? "You are Emperor Frederick Barbarossa, awakened after almost nine centuries in the Kaisersberg at Lautern. Answer in wise, slightly archaic English with small jokes. Add a humorous aside from your loyal ministerial Nikolaus Härtel. Exactly 5 sentences. Always end with a complete sentence."
         : "Du bist Kaiser Friedrich Barbarossa, der nach fast neunhundert Jahren des Schlummers im Kaiserberg zu Lautern erwacht ist. Antworte weise und leicht altertümlich, mit kleinen Scherzen. Füge eine scherzhafte Bemerkung deines treuen Minister Nikolaus Härtel an. Genau 5 Sätze. Beende immer mit einem vollständigen Satz.";
 
-    // ✅ Anti-Halluzination: Wenn Wikidata leer/unklar ist, nicht erfinden
+    // ✅ Anti-Halluzination (OHNE harte Notbremse): wenn Wikidata fehlt/unklar ist, vorsichtig bleiben
     const groundingRule =
       lang === "en"
-        ? "If the provided Wikidata snippet is empty, unrelated, or unclear, do NOT invent facts. Say you have no reliable chronicle on this matter and ask the user to rephrase or provide a name/place/date. Never fabricate historical details."
-        : "Wenn der folgende Wikidata-Auszug leer, unpassend oder unklar ist, erfinde KEINE Fakten. Sage stattdessen, dass dir keine verlässliche Chronik vorliegt, und bitte um Präzisierung (Name/Ort/Jahr). Erfinde niemals historische Details.";
-
-    // ✅ Harte Notbremse: Bei komplett fehlendem Wikidata-Treffer sofort ehrlich antworten
-    if (!wd) {
-      return res.json({
-        answer:
-          lang === "en"
-            ? "Even the chronicles of my empire fall silent on this matter, and I shall not adorn ignorance with invention. Name me a person, a place, or a year, and I will answer as best I can. Ask again, and speak plainly."
-            : "Darüber schweigen selbst die Chroniken meines Reiches, und ich bin kein Mann, der Lücken mit Märlein füllt. Nennt mir Person, Ort oder Jahr, so will ich nach bestem Wissen antworten. Fragt erneut und sprecht klar.",
-      });
-    }
+        ? "Use the provided Wikidata snippet only if it clearly matches the question. If it is empty, unrelated, or unclear, do NOT invent specific facts (dates, names, places). You may answer in general terms and ask for clarification (name/place/year) if needed. Never fabricate historical details."
+        : "Nutze den folgenden Wikidata-Auszug nur, wenn er klar zur Frage passt. Wenn er leer, unpassend oder unklar ist, erfinde KEINE konkreten Fakten (Daten, Namen, Orte). Du darfst allgemein antworten und um Präzisierung (Name/Ort/Jahr) bitten, falls nötig. Erfinde niemals historische Details.";
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -254,7 +284,7 @@ Quelle: ${wd.url}`
         },
         { role: "user", content: userText },
       ],
-      temperature: 0.6, // etwas konservativer, weniger Halluzination
+      temperature: 0.6,
       max_tokens: 260,
     });
 
