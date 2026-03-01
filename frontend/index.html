@@ -688,15 +688,15 @@ function animate() {
   
 /* -----------------------------
    STATE MACHINE – RECOGNITION
-   MIT THINK-PHASE (WAKE-SICHER) – FIXED v3
+   MIT THINK-PHASE (WAKE-SICHER) – FIXED v4
    (SERVER DECIDES LANGUAGE, CLIENT SENDS lang AS FALLBACK)
 ----------------------------- */
 
 let recognition = null;
 let heardSomething = false;
 
-// detectedLanguage bleibt bestehen für Recognition.lang (Engine-Hilfe),
-// aber steuert NICHT mehr die Antwortsprache.
+// detectedLanguage hilft der Engine (Recognition.lang),
+// steuert aber NICHT direkt die Antwortsprache.
 let detectedLanguage = "de";
 
 let _recHandlersBound = false;
@@ -729,7 +729,7 @@ function ensureRecognition() {
 
       lastTranscript = res;
 
-      // Optional: lokale Detektion nur als Hint für Recognition.lang / Think-Phrase
+      // Lokale Detektion nur als Hint für Recognition.lang / Think-Phrase
       detectedLanguage =
         (typeof detectLanguage === "function")
           ? detectLanguage(res)
@@ -769,7 +769,7 @@ function ensureRecognition() {
         hmStartTime = performance.now();
       });
 
-      // ✅ Think-Phrase DE/EN (nur für diesen Satz)
+      // Think-Phrase DE/EN
       const thinkPhrase =
         (detectedLanguage === "en")
           ? "One moment, please."
@@ -777,9 +777,7 @@ function ensureRecognition() {
 
       speak(thinkPhrase, true, (detectedLanguage === "en") ? "en" : "de");
 
-      // ✅ WICHTIG:
-      // - KEINE Sprachinstruktion in den Text kleben
-      // - lang wieder mitschicken (Fallback, falls Server-Regel unklar ist)
+      // Server-Request (lang als Fallback mitsenden)
       fetch("/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -790,6 +788,7 @@ function ensureRecognition() {
       })
       .then(r => r.json())
       .then(data => {
+
         const waitForThinkEnd = setInterval(() => {
           if (!talking) {
             clearInterval(waitForThinkEnd);
@@ -800,21 +799,24 @@ function ensureRecognition() {
             rising = true;
             riseStartTime = performance.now();
 
-            // ✅ Sprache NUR aus Serverantwort, sonst Fallback auf detectedLanguage
-            let answerLang = (detectedLanguage === "en") ? "en" : "de";
+            // Sprache aus Serverantwort übernehmen
+            let answerLang = "de";
             if (data && (data.answerLang === "en" || data.answerLang === "de")) {
               answerLang = data.answerLang;
             }
 
+            // Engine-Hilfe aktualisieren (stabilisiert Folgeerkennung)
+            detectedLanguage = answerLang;
+
             speak(data.answer, false, answerLang);
           }
         }, 120);
+
       })
       .catch(() => {
         STATE = "answer";
         resetMovements();
 
-        // stabiler Default: Deutsch
         speak(
           "Verzeiht, ich habe Euch nicht recht verstanden.",
           false,
@@ -827,6 +829,12 @@ function ensureRecognition() {
   return recognition;
 }
 
+/* -----------------------------
+   RECOGNITION STARTEN (MUSEUM-STABIL)
+   Default: de-DE
+   EN nur nach echter EN-Erkennung
+----------------------------- */
+
 function startRecognition() {
   const r = ensureRecognition();
   if (!r) {
@@ -835,11 +843,18 @@ function startRecognition() {
     return;
   }
 
-  // Recognition-Sprache nach zuletzt vermuteter Sprache setzen (hilft Engine),
-  // aber steuert NICHT mehr die Antwortsprache.
-  r.lang = (detectedLanguage === "en") ? "en-US" : "de-DE";
-  _recSessionId++;
+  // Museum-Default
+  let recLang = "de-DE";
 
+  try {
+    if (detectedLanguage === "en" && lastTranscript && lastTranscript.trim().length > 0) {
+      recLang = "en-US";
+    }
+  } catch (e) {}
+
+  r.lang = recLang;
+
+  _recSessionId++;
   heardSomething = false;
 
   if (recRunning) {
@@ -861,7 +876,14 @@ function startRecognition() {
       const rr = ensureRecognition();
       if (!rr) return;
 
-      rr.lang = (detectedLanguage === "en") ? "en-US" : "de-DE";
+      let retryLang = "de-DE";
+      try {
+        if (detectedLanguage === "en" && lastTranscript && lastTranscript.trim().length > 0) {
+          retryLang = "en-US";
+        }
+      } catch (e) {}
+
+      rr.lang = retryLang;
       heardSomething = false;
 
       recRunning = true;
