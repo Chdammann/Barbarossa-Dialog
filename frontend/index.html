@@ -771,52 +771,54 @@ function ensureRecognition() {
 
       speak("Ähm … einen Moment bitte.", true);
 
-      // ✅ WICHTIG:
-      // - KEINE Sprachinstruktion mehr in den Text kleben
-      // - KEIN lang mehr schicken (Server entscheidet pro Request)
-      fetch("/ask", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text: lastTranscript
-        })
-      })
-      .then(r => r.json())
-      .then(data => {
-        const waitForThinkEnd = setInterval(() => {
-          if (!talking) {
-            clearInterval(waitForThinkEnd);
+     // ✅ WICHTIG:
+// - KEINE Sprachinstruktion mehr in den Text kleben
+// - KEIN lang mehr schicken (Server entscheidet pro Request)
+fetch("/ask", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    text: lastTranscript
+  })
+})
+.then(r => r.json())
+.then(data => {
+  const waitForThinkEnd = setInterval(() => {
+    if (!talking) {
+      clearInterval(waitForThinkEnd);
 
-            STATE = "answer";
-            resetMovements();
+      STATE = "answer";
+      resetMovements();
 
-            rising = true;
-            riseStartTime = performance.now();
+      rising = true;
+      riseStartTime = performance.now();
 
-            // ✅ Sprache für TTS aus Serverantwort nehmen (falls vorhanden),
-            // sonst detectedLanguage als Fallback.
-            const answerLang =
-              (data && (data.answerLang === "en" || data.answerLang === "de"))
-                ? data.answerLang
-                : detectedLanguage;
+      // ✅ Sprache NUR aus Serverantwort
+      let answerLang = "de"; // Museums-Default
 
-            speak(data.answer, false, answerLang);
-          }
-        }, 120);
-      })
-      .catch(() => {
-        STATE = "answer";
-        resetMovements();
-        speak(
-          "Verzeiht, ich habe Euch nicht recht verstanden.",
-          false,
-          detectedLanguage
-        );
-      });
-    };
-  }
+      if (data && (data.answerLang === "en" || data.answerLang === "de")) {
+        answerLang = data.answerLang;
+      }
 
-  return recognition;
+      speak(data.answer, false, answerLang);
+    }
+  }, 120);
+})
+.catch(() => {
+  STATE = "answer";
+  resetMovements();
+
+  // stabiler Default (keine Alt-Variable mehr verwenden)
+  speak(
+    "Verzeiht, ich habe Euch nicht recht verstanden.",
+    false,
+    "de"
+  );
+});
+};
+}
+
+return recognition;
 }
 
 function startRecognition() {
