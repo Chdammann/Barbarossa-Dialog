@@ -775,50 +775,59 @@ function ensureRecognition() {
     : "Ähm … einen Moment bitte.";
 
 speak(thinkPhrase, true, (detectedLanguage === "en") ? "en" : "de");
-      // ✅ WICHTIG:
-      // - KEINE Sprachinstruktion mehr in den Text kleben
-      // - KEIN lang mehr schicken (Server entscheidet pro Request)
-      fetch("/ask", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text: lastTranscript
-        })
-      })
-      .then(r => r.json())
-      .then(data => {
-        const waitForThinkEnd = setInterval(() => {
-          if (!talking) {
-            clearInterval(waitForThinkEnd);
+    // Think-Phrase wurde weiter oben gesetzt:
+const thinkPhrase =
+  (detectedLanguage === "en")
+    ? "One moment, please."
+    : "Ähm … einen Moment bitte.";
 
-            STATE = "answer";
-            resetMovements();
+// Denkphrase sprechen (sprache passend erzwingen)
+speak(thinkPhrase, true, (detectedLanguage === "en") ? "en" : "de");
 
-            rising = true;
-            riseStartTime = performance.now();
+// ✅ WICHTIG:
+// - KEINE Sprachinstruktion mehr in den Text kleben
+// - lang wieder mitschicken (nur als Fallback, z.B. bei "dear emperor...")
+fetch("/ask", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    text: lastTranscript,
+    lang: detectedLanguage
+  })
+})
+.then(r => r.json())
+.then(data => {
+  const waitForThinkEnd = setInterval(() => {
+    if (!talking) {
+      clearInterval(waitForThinkEnd);
 
-            // ✅ Sprache NUR aus Serverantwort
-            let answerLang = "de"; // Museums-Default
-            if (data && (data.answerLang === "en" || data.answerLang === "de")) {
-              answerLang = data.answerLang;
-            }
+      STATE = "answer";
+      resetMovements();
 
-            speak(data.answer, false, answerLang);
-          }
-        }, 120);
-      })
-      .catch(() => {
-        STATE = "answer";
-        resetMovements();
+      rising = true;
+      riseStartTime = performance.now();
 
-        // stabiler Default (keine Alt-Variable mehr verwenden)
-        speak(
-          "Verzeiht, ich habe Euch nicht recht verstanden.",
-          false,
-          "de"
-        );
-      });
-    };
+      // ✅ Sprache NUR aus Serverantwort, sonst Fallback auf detectedLanguage
+      let answerLang = (detectedLanguage === "en") ? "en" : "de"; // sicherer Default
+      if (data && (data.answerLang === "en" || data.answerLang === "de")) {
+        answerLang = data.answerLang;
+      }
+
+      speak(data.answer, false, answerLang);
+    }
+  }, 120);
+})
+.catch(() => {
+  STATE = "answer";
+  resetMovements();
+
+  // stabiler Default: Deutsch
+  speak(
+    "Verzeiht, ich habe Euch nicht recht verstanden.",
+    false,
+    "de"
+  );
+});
   }
 
   return recognition;
