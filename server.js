@@ -71,7 +71,6 @@ function detectLanguageServer(text) {
   const t0 = String(text || "").trim();
   if (!t0) return null;
 
-  // Normalisieren: nur Buchstaben/Zahlen/Leerzeichen am Anfang berücksichtigen
   const t = t0
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s-]/gu, " ")
@@ -240,11 +239,14 @@ async function getWikidataContext(userText, lang /* "de"|"en" */) {
 app.post("/ask", async (req, res) => {
   try {
     const userTextRaw = req.body?.text;
-    const langClient = normalizeLang(req.body?.lang);
+
+    // ✅ Wichtig: langClient nur nutzen, wenn es wirklich geschickt wurde
+    const hasClientLang = typeof req.body?.lang === "string" && req.body.lang.trim().length > 0;
+    const langClient = hasClientLang ? normalizeLang(req.body.lang) : null;
 
     const userText = String(userTextRaw || "").trim();
 
-    // ✅ Sprache pro Request: erst Satzanfang-Regel, sonst Client-Fallback
+    // ✅ Sprache pro Request: erst Satzanfang-Regel, sonst Client-Fallback, sonst de
     const langFromText = detectLanguageServer(userText);
     const langUsed = langFromText || langClient || "de";
 
@@ -256,6 +258,7 @@ app.post("/ask", async (req, res) => {
           langUsed === "en"
             ? "I heard nothing clearly. Please ask again."
             : "Ich habe Euch nicht deutlich vernommen. Bitte fragt erneut.",
+        answerLang: langUsed
       });
     }
 
@@ -270,7 +273,7 @@ app.post("/ask", async (req, res) => {
           ? "You name a party of your time and its quarrels. I, Frederick Barbarossa, will not judge modern factions from my ancient throne. My loyal minister Nikolaus Härtel mutters that such disputes age a man faster than any crusade, and I cannot wholly disagree. Ask me rather of empire, law, or the old tales of the Kaiserberg. Let this be my final word on that matter."
           : "Ihr nennt eine Partei Eurer Zeit und ihre Händel. Ich, Friedrich Barbarossa, richte nicht über die modernen Fraktionen von meinem alten Thron herab. Mein treuer Minister Nikolaus Härtel murrt, solcher Streit lasse einen schneller altern als ein Kreuzzug, und ich kann ihm kaum widersprechen. Fragt mich lieber nach Reich, Recht oder den alten Geschichten des Kaiserbergs. Dies sei mein abschließendes Wort zu diesem Thema.";
 
-      return res.json({ answer });
+      return res.json({ answer, answerLang: langUsed });
     }
     // ⭐⭐⭐ Ende Sonderregel
 
@@ -314,7 +317,7 @@ Quelle: ${wd.url}`
     answer = forceSentenceEnd(answer, langUsed);
 
     console.log("💬 KI-Antwort:", answer);
-    res.json({ answer });
+    res.json({ answer, answerLang: langUsed });
   } catch (error) {
     console.error("❌ Fehler bei /ask:", error);
     res.status(500).json({ error: "Fehler beim Abrufen der KI-Antwort." });
