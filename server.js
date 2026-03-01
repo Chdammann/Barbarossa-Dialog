@@ -62,11 +62,10 @@ function forceSentenceEnd(text, lang) {
   let t = String(text || "").trim();
   if (!t) return t;
   if (endsWithSentence(t)) return t;
-  // minimaler Fix: Punkt anfügen (Deutsch/Englisch ok)
   return t + ".";
 }
 
-// ✅ NEU (ROBUST): Sprache primär über Satzanfang (Fragewörter) bestimmen
+// ✅ ROBUST: Sprache primär über Satzanfang bestimmen (Fragewörter + Imperativ-Starter)
 function detectLanguageServer(text) {
   const t0 = String(text || "").trim();
   if (!t0) return null;
@@ -82,22 +81,27 @@ function detectLanguageServer(text) {
   // harte DE-Indikatoren
   if (/[äöüß]/.test(t0)) return "de";
 
-  // harte Satzanfang-Regeln (die müssen sitzen)
+  // harte Satzanfang-Regeln (Fragewörter)
   if (/^(was|wer|wen|wem|wessen|wie|wo|wohin|woher|wann|warum|wieso|weshalb)\b/.test(t)) return "de";
   if (/^(what|why|where|when|who|whom|whose|which|how)\b/.test(t)) return "en";
 
-  // wenn kein klares Fragewort am Anfang: unklar
+  // ✅ NEU: typische Satzstarter (Imperativ) – sehr häufig im Museum
+  // DE
+  if (/^(erzähl|erzaehl|sage|sag|nenn|nenne|erkläre|erklaere|beschreibe|zeige|sprich)\b/.test(t)) return "de";
+  // EN
+  if (/^(tell|say|name|explain|describe|show|speak)\b/.test(t)) return "en";
+
+  // unklar
   return null;
 }
 
 /* ===============================
    WIKIDATA (MINIMAL) – Label + Beschreibung
-   kostenlos, timeout- & cache-gesichert
 ================================ */
 
-const WD_CACHE = new Map(); // key -> { ts, data }
-const WD_TTL_MS = 10 * 60 * 1000; // 10 Minuten
-const WD_TIMEOUT_MS = 1800; // 1.8s museum-safe
+const WD_CACHE = new Map();
+const WD_TTL_MS = 10 * 60 * 1000;
+const WD_TIMEOUT_MS = 1800;
 
 function wdCacheGet(key) {
   const hit = WD_CACHE.get(key);
@@ -151,7 +155,7 @@ function toEntityQuery(userText, lang) {
   ]);
 
   const stopEn = new Set([
-    "what","why","where","when","who","whom","whose","which","how",
+    "what","why","where","when","who","whom","whose","which|how",
     "is","are","was","were","be","been",
     "i","you","we","they","he","she","it",
     "my","your","our","their",
@@ -166,7 +170,7 @@ function toEntityQuery(userText, lang) {
   return words.slice(0, 6).join(" ").slice(0, 80);
 }
 
-async function getWikidataContext(userText, lang /* "de"|"en" */) {
+async function getWikidataContext(userText, lang) {
   const qRaw = cleanQuery(userText);
   if (!qRaw) return null;
 
@@ -174,7 +178,7 @@ async function getWikidataContext(userText, lang /* "de"|"en" */) {
   const cacheKey = `wdmin:${lang}:${q.toLowerCase()}`;
 
   const cached = wdCacheGet(cacheKey);
-  if (cached !== null) return cached; // wir cachen auch null
+  if (cached !== null) return cached;
 
   const searchUrl =
     `https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(q)}` +
@@ -231,22 +235,17 @@ async function getWikidataContext(userText, lang /* "de"|"en" */) {
   }
 }
 
-/* ===============================
-   /WIKIDATA MINIMAL
-================================ */
-
 // === KI-Antwort auf gesprochene Frage (DE/EN) ===
 app.post("/ask", async (req, res) => {
   try {
     const userTextRaw = req.body?.text;
 
-    // ✅ Wichtig: langClient nur nutzen, wenn es wirklich geschickt wurde
-    const hasClientLang = typeof req.body?.lang === "string" && req.body.lang.trim().length > 0;
+    const hasClientLang =
+      typeof req.body?.lang === "string" && req.body.lang.trim().length > 0;
     const langClient = hasClientLang ? normalizeLang(req.body.lang) : null;
 
     const userText = String(userTextRaw || "").trim();
 
-    // ✅ Sprache pro Request: erst Satzanfang-Regel, sonst Client-Fallback, sonst de
     const langFromText = detectLanguageServer(userText);
     const langUsed = langFromText || langClient || "de";
 
@@ -258,11 +257,10 @@ app.post("/ask", async (req, res) => {
           langUsed === "en"
             ? "I heard nothing clearly. Please ask again."
             : "Ich habe Euch nicht deutlich vernommen. Bitte fragt erneut.",
-        answerLang: langUsed
+        answerLang: langUsed,
       });
     }
 
-    // ⭐⭐⭐ Sonderregel (politische Themen) – sprachabhängig & neutraler
     const tLower = userText.toLowerCase();
     const mentionsAfd =
       tLower.includes("afd") || tLower.includes("alternative für deutschland");
@@ -275,7 +273,6 @@ app.post("/ask", async (req, res) => {
 
       return res.json({ answer, answerLang: langUsed });
     }
-    // ⭐⭐⭐ Ende Sonderregel
 
     const wd = await getWikidataContext(userText, langUsed);
 
