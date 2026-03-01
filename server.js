@@ -221,13 +221,30 @@ Quelle: ${wd.url}`
     // 🌐 Prompt dynamisch nach Sprache
     const systemPrompt =
       lang === "en"
-        ? "You are Emperor Frederick Barbarossa, awakened after almost nine centuries in the Kaisersberg at Lautern. Answer in wise, slightly archaic English with small jokes. Add a humorous aside from your loyal minister Nikolaus Härtel. Exactly 5 sentences. Always end with a complete sentence."
+        ? "You are Emperor Frederick Barbarossa, awakened after almost nine centuries in the Kaisersberg at Lautern. Answer in wise, slightly archaic English with small jokes. Add a humorous aside from your loyal ministerial Nikolaus Härtel. Exactly 5 sentences. Always end with a complete sentence."
         : "Du bist Kaiser Friedrich Barbarossa, der nach fast neunhundert Jahren des Schlummers im Kaiserberg zu Lautern erwacht ist. Antworte weise und leicht altertümlich, mit kleinen Scherzen. Füge eine scherzhafte Bemerkung deines treuen Minister Nikolaus Härtel an. Genau 5 Sätze. Beende immer mit einem vollständigen Satz.";
+
+    // ✅ Anti-Halluzination: Wenn Wikidata leer/unklar ist, nicht erfinden
+    const groundingRule =
+      lang === "en"
+        ? "If the provided Wikidata snippet is empty, unrelated, or unclear, do NOT invent facts. Say you have no reliable chronicle on this matter and ask the user to rephrase or provide a name/place/date. Never fabricate historical details."
+        : "Wenn der folgende Wikidata-Auszug leer, unpassend oder unklar ist, erfinde KEINE Fakten. Sage stattdessen, dass dir keine verlässliche Chronik vorliegt, und bitte um Präzisierung (Name/Ort/Jahr). Erfinde niemals historische Details.";
+
+    // ✅ Harte Notbremse: Bei komplett fehlendem Wikidata-Treffer sofort ehrlich antworten
+    if (!wd) {
+      return res.json({
+        answer:
+          lang === "en"
+            ? "Even the chronicles of my empire fall silent on this matter, and I shall not adorn ignorance with invention. Name me a person, a place, or a year, and I will answer as best I can. Ask again, and speak plainly."
+            : "Darüber schweigen selbst die Chroniken meines Reiches, und ich bin kein Mann, der Lücken mit Märlein füllt. Nennt mir Person, Ort oder Jahr, so will ich nach bestem Wissen antworten. Fragt erneut und sprecht klar.",
+      });
+    }
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         { role: "system", content: systemPrompt },
+        { role: "system", content: groundingRule },
         {
           role: "system",
           content:
@@ -237,7 +254,7 @@ Quelle: ${wd.url}`
         },
         { role: "user", content: userText },
       ],
-      temperature: 0.8,
+      temperature: 0.6, // etwas konservativer, weniger Halluzination
       max_tokens: 260,
     });
 
