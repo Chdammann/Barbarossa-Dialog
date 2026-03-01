@@ -769,8 +769,12 @@ function ensureRecognition() {
         hmStartTime = performance.now();
       });
 
-      speak("Ähm … einen Moment bitte.", true);
+      const thinkPhrase =
+  (detectedLanguage === "en")
+    ? "One moment, please."
+    : "Ähm … einen Moment bitte.";
 
+speak(thinkPhrase, true, (detectedLanguage === "en") ? "en" : "de");
       // ✅ WICHTIG:
       // - KEINE Sprachinstruktion mehr in den Text kleben
       // - KEIN lang mehr schicken (Server entscheidet pro Request)
