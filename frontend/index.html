@@ -107,21 +107,29 @@
     text-align: center;
     z-index: 10;
   }
+ /* -----------------------------
+   FOOTER
+----------------------------- */
+footer {
+  position: fixed;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;                 /* NEU: für Text + Logo nebeneinander */
+  align-items: center;
+  gap: 8px;                      /* Abstand zwischen Text und Logo */
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.6);
+  text-align: center;
+  pointer-events: none;
+  z-index: 10000;
+}
 
-  /* -----------------------------
-     FOOTER
-  ----------------------------- */
-  footer {
-    position: fixed;
-    bottom: 12px;
-    left: 50%;
-    transform: translateX(-50%);
-    font-size: 13px;
-    color: rgba(255, 255, 255, 0.6);
-    text-align: center;
-    pointer-events: none;
-    z-index: 10000;
-  }
+footer img {
+  height: 20px;                  /* Logo-Größe */
+  width: auto;
+  opacity: 0.85;
+}
 </style>
 </head>
 
@@ -133,9 +141,12 @@
   <canvas id="avatarCanvas"></canvas>
   <button id="micBtn">🎤</button>
 
-  <footer>
-    © 2026 Dr. Christoph Dammann
-  </footer>
+  <footer class="footer">
+  <span class="footer-text">
+    © 2026 Christoph Dammann
+  </span>
+  <img src="Kl750.png" alt="Logo" class="footer-logo">
+</footer>
 
   <script>
     function showQuestionHint() {
