@@ -294,8 +294,7 @@ let CONV_ID = null;
 // Hilfsfunktion: neue Conversation-ID erzeugen
 function createConversationId() {
   return "conv_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
-
-greetTimeout = null;
+}
 
 // === Voice-Auswahl (GLOBAL) – plattformsicher ===
 let englishVoice = null;
@@ -378,6 +377,7 @@ function resetMovements() {
   hmNeigen = false;
   rising = false;
   toIdlePose = false;
+}toIdlePose = false;
 }
 
  // ===============================
@@ -1013,10 +1013,12 @@ function healIfStuck(tag = "") {
   } catch (e) {}
 
   // recRunning-Desync heilen
-  if (recRunning && !recognition) {
-    console.warn("🩹 heal:", tag, "recRunning=true aber recognition=null → recRunning=false");
-    recRunning = false;
-  }
+  try {
+    if (recRunning && !recognition) {
+      console.warn("🩹 heal:", tag, "recRunning=true aber recognition=null → recRunning=false");
+      recRunning = false;
+    }
+  } catch (e) {}
 
   // Wenn alles ruhig ist, aber STATE hängt → zurück auf greet (Hint bleibt sinnvoll)
   const quiet = (!talking && !recRunning);
@@ -1050,7 +1052,7 @@ function startInteraction() {
       SESSION_ACTIVE = true;
       SESSION_LAST_TS = Date.now();
       CONV_ID = createConversationId();
-      console.log("🗣️ Neue Dialog-Session:", CONV_ID);
+      try { console.log("🗣️ Neue Dialog-Session:", CONV_ID); } catch (e) {}
     }
 
     // Voice-Warmup
@@ -1075,7 +1077,7 @@ function startInteraction() {
     rising = true;
     riseStartTime = performance.now();
 
-    try { recognition?.abort(); } catch(e) {}
+    try { recognition?.abort(); } catch (e) {}
     recRunning = false;
     listeningFinished = false;
 
@@ -1148,13 +1150,15 @@ function startInteraction() {
 
     // Falls Recognition nicht startet → zurück zu greet + Hint
     setTimeout(() => {
+      // nochmal heilen (falls Chrome Sessions verschluckt)
       healIfStuck("listen-start-guard");
 
       if (STATE === "listen" && !recRunning) {
         console.warn("⚠️ Recognition start fehlgeschlagen – Fallback auf greet");
         STATE = "greet";
         resetMovements();
-        try { showHint("Kurz Knopf drücken, dann in einem kurzen, vollständigen Satz fragen"); } catch (e) {} }
+        try { showHint("Kurz Knopf drücken, dann in einem kurzen, vollständigen Satz fragen"); } catch (e) {}
+      }
     }, 900);
 
     return;
