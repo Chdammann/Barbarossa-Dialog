@@ -66,7 +66,7 @@ function forceSentenceEnd(text, lang) {
 }
 
 // ✅ Sonderregel: "Aufwecken"-Fragen (DE/EN) -> feste Antwort ohne OpenAI-Call
-function isWakeQuestion(text, lang) {
+function isWakeQuestion(text) {
   const t0 = String(text || "").trim();
   if (!t0) return false;
 
@@ -78,22 +78,43 @@ function isWakeQuestion(text, lang) {
 
   if (!t) return false;
 
-  if (lang === "de") {
-    return (
-      t.includes("wer hat dich aufgeweckt") ||
-      t.includes("wie bist du aufgewacht") ||
-      t.includes("warum bist du aufgewacht")
-    );
-  }
+  // ---- DE: wer/wie/warum + (aufgeweckt|auf geweckt|geweckt|aufgewacht|auf gewacht|erwacht) ----
+  const hasWer = /\bwer\b/.test(t);
+  const hasWie = /\bwie\b/.test(t);
+  const hasWarum = /\b(warum|wieso|weshalb)\b/.test(t);
+  const hasDich = /\bdich\b/.test(t);
+  const hasDu = /\bdu\b/.test(t);
 
-  // EN (robust, nicht nur exakte Wortfolge)
-  return (
-    (/\bwho\b/.test(t) &&
-      (/\bwoke\b/.test(t) || /\bwoken\b/.test(t)) &&
-      /\byou\b/.test(t)) ||
-    (/\bhow\b/.test(t) && (t.includes("wake up") || t.includes("woke up"))) ||
-    (/\bwhy\b/.test(t) && (t.includes("wake up") || t.includes("woke up")))
-  );
+  const hasGeweckt = /\b(auf\s*)?geweck?t\b/.test(t); // aufgeweckt / auf geweckt / geweckt
+  const hasAufgewacht = /\bauf\s*gewacht\b/.test(t); // aufgewacht / auf gewacht
+  const hasErwacht = /\berwacht\b/.test(t); // erwacht
+
+  const deWho = hasWer && hasDich && hasGeweckt;
+  const deHow = hasWie && hasDu && (hasAufgewacht || hasErwacht);
+  const deWhy = hasWarum && hasDu && (hasAufgewacht || hasErwacht);
+
+  if (deWho || deHow || deWhy) return true;
+
+  // ---- EN: who/how/why + (woke|woken|awakened) + you (+ optional up) ----
+  const hasWho = /\bwho\b/.test(t);
+  const hasHow = /\bhow\b/.test(t);
+  const hasWhy = /\bwhy\b/.test(t);
+  const hasYou = /\byou\b/.test(t);
+
+  const hasWoke = /\b(woke|woken|awoke|awakened|awaken)\b/.test(t);
+  const hasWakeUp = /\bwake\s*up\b/.test(t) || /\bwoke\s*up\b/.test(t);
+
+  const enWho = hasWho && hasYou && (hasWoke || hasWakeUp);
+  const enHow =
+    hasHow &&
+    hasYou &&
+    (hasWakeUp || /\bawaken(ed)?\b/.test(t) || /\bawoke\b/.test(t));
+  const enWhy =
+    hasWhy &&
+    hasYou &&
+    (hasWakeUp || /\bawaken(ed)?\b/.test(t) || /\bawoke\b/.test(t));
+
+  return enWho || enHow || enWhy;
 }
 
 function wakeAnswer(lang) {
@@ -446,7 +467,7 @@ app.post("/ask", async (req, res) => {
     }
 
     // ✅ Sonderregel: Aufwecken-Fragen -> feste Antwort, kein OpenAI-Call
-    if (isWakeQuestion(userText, langUsed)) {
+    if (isWakeQuestion(userText)) {
       const answer = forceSentenceEnd(wakeAnswer(langUsed), langUsed);
       return res.json({ answer, answerLang: langUsed });
     }
