@@ -715,7 +715,44 @@ function animate() {
 
   renderer.render(scene, camera);
 }
-  
+ function autoListenNextTurn(reason = "") {
+  // nur in Dialog-Session automatisch weiter
+  try {
+    if (typeof SESSION_ACTIVE !== "undefined" && !SESSION_ACTIVE) return;
+  } catch (e) { return; }
+
+  // nur wenn gerade ruhig
+  if (talking || recRunning) return;
+
+  // nur aus passenden Zuständen
+  if (STATE !== "greet" && STATE !== "answer" && STATE !== "think") return;
+
+  // ganz kurze Entkopplung vom onend (Edge/Chrome sind sonst zickig)
+  setTimeout(() => {
+    // nochmal Guards
+    if (talking || recRunning) return;
+    if (STATE !== "greet" && STATE !== "answer") return;
+
+    try { if (typeof hideHint === "function") hideHint(); } catch (e) {}
+
+    lastTranscript = "";
+    listeningFinished = false;
+    STATE = "listen";
+
+    startRecognition();
+
+    // Guard: falls Recognition nicht startet → zurück zu greet + Hint
+    setTimeout(() => {
+      healIfStuck("autoListen-guard");
+      if (STATE === "listen" && !recRunning) {
+        STATE = "greet";
+        resetMovements();
+        try { showHint("Kurz Knopf drücken, dann in einem kurzen, vollständigen Satz fragen"); } catch (e) {}
+      }
+    }, 900);
+
+  }, 180);
+  } 
 /* -----------------------------
    STATE MACHINE – RECOGNITION
    MIT THINK-PHASE (WAKE-SICHER) – FIXED v4
@@ -1456,25 +1493,26 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
       }
     }
 
-    if (STATE === "answer") {
-      resetMovements();
-      hmNeigen = false;
-      rising = false;
+    ifif (STATE === "answer") {
+  resetMovements();
+  hmNeigen = false;
+  rising = false;
 
-      // ✅ DIALOG: nach Antwort NICHT zurück auf idle (sonst Greeting wird neu getriggert)
-      // Stattdessen zurück in "greet" (bereit für nächsten Knopfdruck → listen)
-      if (typeof SESSION_ACTIVE !== "undefined" && SESSION_ACTIVE) {
-        STATE = "greet";
-        greeted = true;
-        if (typeof showHint === "function") {
-          showHint("Kurz Knopf drücken, dann in einem kurzen, vollständigen Satz fragen");
-        }
-      } else {
-        greeted = false;
-        STATE = "idle";
-        if (typeof hideHint === "function") hideHint();
-      }
-    }
+  // ✅ DIALOG: nach Antwort in greet bleiben (Session aktiv), aber direkt wieder zuhören
+  if (typeof SESSION_ACTIVE !== "undefined" && SESSION_ACTIVE) {
+    STATE = "greet";
+    greeted = true;
+
+    try { if (typeof showHint === "function") showHint("Ich höre zu …"); } catch (e) {}
+
+    // 🔥 jetzt automatisch nächste Eingabe starten (ohne Enter)
+    autoListenNextTurn("after-answer");
+  } else {
+    greeted = false;
+    STATE = "idle";
+    if (typeof hideHint === "function") hideHint();
+  }
+}
 
     if (onEnd && typeof onEnd === "function") {
       try { onEnd(); } catch (e) {}
