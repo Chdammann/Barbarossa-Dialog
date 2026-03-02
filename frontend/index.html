@@ -1215,14 +1215,22 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
   if (lang === "en") {
     let v = (typeof englishVoice !== "undefined" && englishVoice) ? englishVoice : null;
 
+    const isOnlineNatural = (name) => /Online\s*\(Natural\)/i.test(name || "");
+    const isAva = (name) => /\bAva\b/i.test(name || "");
+
+    // Ava Online (Natural) immer ausschließen
+    if (v && (isOnlineNatural(v.name) || isAva(v.name))) {
+      v = null;
+    }
+
     // Edge: Online (Natural) ignoriert häufig pitch/rate -> versuche Fallback
-    if (v && /Online\s*\(Natural\)/i.test(v.name)) {
+    if (!v) {
       const voices = speechSynthesis.getVoices();
 
-      // 1) gleiche Sprache, aber NICHT Online (Natural)
+      // 1) gleiche Sprache, aber NICHT Online (Natural) und NICHT Ava
       const fallback =
-        voices.find(x => x.lang === "en-US" && !/Online\s*\(Natural\)/i.test(x.name)) ||
-        voices.find(x => (x.lang || "").startsWith("en") && !/Online\s*\(Natural\)/i.test(x.name)) ||
+        voices.find(x => x.lang === "en-US" && !isOnlineNatural(x.name) && !isAva(x.name)) ||
+        voices.find(x => (x.lang || "").startsWith("en") && !isOnlineNatural(x.name) && !isAva(x.name)) ||
         null;
 
       if (fallback) v = fallback;
