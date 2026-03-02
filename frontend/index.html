@@ -756,7 +756,7 @@ function autoListenNextTurn(reason = "") {
 }
 /* -----------------------------
    STATE MACHINE – RECOGNITION
-   MIT THINK-PHASE (WAKE-SICHER) – FIXED v4
+   MIT THINK-PHASE (WAKE-SICHER) – FIXED v4.1
    (SERVER DECIDES LANGUAGE, CLIENT SENDS lang AS FALLBACK)
 ----------------------------- */
 
@@ -770,6 +770,15 @@ let detectedLanguage = "de";
 let _recHandlersBound = false;
 let _recSessionId = 0;
 let _recAbortByUs = false;
+
+// ✅ NEU: Stabilitäts-Guards gegen Endlos-"no-speech"
+let _noSpeechCount = 0;
+let _listenArmedAt = 0;
+let _awaitingServer = false;
+
+const NO_SPEECH_MAX_RETRIES = 2;     // wie oft bei "no-speech" direkt neu starten
+const NO_SPEECH_RETRY_MS    = 900;   // Pause bevor neu gestartet wird
+const SILENCE_GRACE_MS      = 2200;  // erst nach echter Pause "stille erkannt" behandeln
 
 function getSpeechRecognitionCtor() {
   return window.SpeechRecognition || window.webkitSpeechRecognition || null;
@@ -804,10 +813,50 @@ function ensureRecognition() {
           : "de";
 
       heardSomething = true;
+
+      // ✅ sobald was kam: no-speech reset
+      _noSpeechCount = 0;
     };
 
     recognition.onerror = (e) => {
-      try { console.warn("🎙️ recognition.onerror:", e?.error || e); } catch {}
+      const err = e?.error || e;
+      try { console.warn("🎙️ recognition.onerror:", err); } catch {}
+
+      // ✅ Endlos-Loop stoppen: nur in LISTEN behandeln
+      if (STATE !== "listen") return;
+
+      // "no-speech" ist in Chrome normal, aber darf nicht endlos rotieren
+      if (err === "no-speech") {
+        _noSpeechCount++;
+
+        // wenn wir gerade erst gestartet haben, gib erstmal Grace-Time (nicht sofort eskalieren)
+        const sinceArm = performance.now() - (_listenArmedAt || 0);
+        if (sinceArm < SILENCE_GRACE_MS) {
+          // warten, onend wird kommen, dort behandeln wir es sauber
+          return;
+        }
+
+        if (_noSpeechCount <= NO_SPEECH_MAX_RETRIES) {
+          // sanfter Retry (kurz warten)
+          _recAbortByUs = true;
+          try { recognition.abort(); } catch (e2) {}
+
+          setTimeout(() => {
+            if (STATE !== "listen") return;
+            if (talking || recRunning) return;
+            try { startRecognition(); } catch (e3) {}
+          }, NO_SPEECH_RETRY_MS);
+
+          return;
+        }
+
+        // zu viele no-speech → zurück zu greet, sonst Endlos-Noise im Museum
+        recRunning = false;
+        STATE = "greet";
+        greeted = true;
+        try { showHint("Kurz Knopf drücken, dann in einem vollständigen Satz fragen"); } catch (e2) {}
+        return;
+      }
     };
 
     recognition.onend = () => {
@@ -826,21 +875,41 @@ function ensureRecognition() {
       // ===== 1) NICHTS GEHÖRT =====
       if (!heardSomething || !lastTranscript) {
 
+        // ✅ erst nach echter Pause behandeln (sonst Loop bei kurzen Atempausen)
+        const sinceArm = performance.now() - (_listenArmedAt || 0);
+        if (sinceArm < SILENCE_GRACE_MS) {
+          // nochmal lauschen, aber NICHT sofort (entkoppeln)
+          try {
+            if (SESSION_ACTIVE) {
+              console.log("🕳️ Stille (kurz) – höre weiter…");
+              STATE = "listen";
+              setTimeout(() => {
+                if (STATE !== "listen") return;
+                if (talking || recRunning) return;
+                startRecognition();
+              }, 650);
+              return;
+            }
+          } catch (e) {}
+
+          STATE = "greet";
+          try { showHint("Kurz Knopf drücken, dann fragen"); } catch (e) {}
+          return;
+        }
+
         // ✅ Wenn Dialog aktiv: einmal sanft neu zuhören (Pause zulassen)
         try {
           if (SESSION_ACTIVE) {
             console.log("🕳️ Stille erkannt – höre weiter…");
-            STATE = "greet";
-            greeted = true;
+            STATE = "listen";
 
-            // kleine Entkopplung, dann direkt wieder listen
             setTimeout(() => {
+              if (STATE !== "listen") return;
               if (talking || recRunning) return;
               lastTranscript = "";
               listeningFinished = false;
-              STATE = "listen";
               startRecognition();
-            }, 250);
+            }, 900); // ✅ länger als vorher
 
             return;
           }
@@ -861,23 +930,26 @@ function ensureRecognition() {
         hmStartTime = performance.now();
       });
 
-      // Think-Phrase DE/EN (wird NUR gesprochen, wenn es wirklich dauert)
+      // Think-Phrase DE/EN (nur wenn es wirklich dauert)
       const thinkPhrase =
         (detectedLanguage === "en")
           ? "One moment, please."
           : "Ähm … dazu kann ich etwas sagen.";
 
-      const THINK_DELAY_MS   = 800; // erst dann Think sprechen
-      const MIN_THINK_GAP_MS = 450; // wenn Think gesprochen, nicht sofort hart umschalten
+      // ✅ NEU: Think erst später, und nur wenn Request wirklich noch offen ist
+      const THINK_DELAY_MS   = 1500;
+      const MIN_THINK_GAP_MS = 450;
 
       let thinkTimer = null;
       let thinkStartedAt = 0;
       let thinkWasSpoken = false;
 
-      // Timer starten: spricht nur, wenn wir nach THINK_DELAY_MS immer noch warten
+      _awaitingServer = true;
+
       thinkTimer = setTimeout(() => {
         if (STATE !== "think") return;
         if (talking) return;
+        if (!_awaitingServer) return; // ✅ wenn Antwort schon da, nie sprechen
 
         thinkWasSpoken = true;
         thinkStartedAt = Date.now();
@@ -903,6 +975,7 @@ function ensureRecognition() {
       })
         .then(r => r.json())
         .then(data => {
+          _awaitingServer = false;
 
           // Think-Timer stoppen (falls noch nicht gesprochen)
           if (thinkTimer) {
@@ -945,6 +1018,7 @@ function ensureRecognition() {
           else proceed();
         })
         .catch(() => {
+          _awaitingServer = false;
 
           if (thinkTimer) {
             clearTimeout(thinkTimer);
