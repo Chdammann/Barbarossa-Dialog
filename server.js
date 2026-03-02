@@ -46,6 +46,70 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+/* ===============================
+   DIALOG-CONTEXT (SESSION HISTORY)
+   - optional: works only if client sends conversationId
+   - TTL + size limits (museum-safe)
+================================ */
+
+const CONV_STORE = new Map(); // id -> { ts, lastLang, msgs: [{role, content}] }
+
+const CONV_TTL_MS = 20 * 60 * 1000; // 20 min
+const CONV_MAX_MSGS = 12; // max messages (user+assistant), e.g. 6 turns
+
+function convNow() {
+  return Date.now();
+}
+
+function convPruneExpired() {
+  const now = convNow();
+  for (const [id, c] of CONV_STORE.entries()) {
+    if (!c || !c.ts || now - c.ts > CONV_TTL_MS) {
+      CONV_STORE.delete(id);
+    }
+  }
+}
+
+function convGet(id) {
+  if (!id) return null;
+  convPruneExpired();
+
+  const key = String(id).trim();
+  if (!key) return null;
+
+  let c = CONV_STORE.get(key);
+  if (!c) {
+    c = { ts: convNow(), lastLang: null, msgs: [] };
+    CONV_STORE.set(key, c);
+  } else {
+    c.ts = convNow();
+  }
+  return c;
+}
+
+function convPush(id, role, content) {
+  const c = convGet(id);
+  if (!c) return;
+
+  const txt = String(content || "").trim();
+  if (!txt) return;
+
+  c.msgs.push({ role, content: txt });
+
+  // hard cap
+  if (c.msgs.length > CONV_MAX_MSGS) {
+    c.msgs = c.msgs.slice(c.msgs.length - CONV_MAX_MSGS);
+  }
+
+  c.ts = convNow();
+}
+
+function convGetHistoryMsgs(id) {
+  const c = convGet(id);
+  if (!c) return [];
+  return Array.isArray(c.msgs) ? c.msgs : [];
+}
+
 // --- Helpers ---
 function normalizeLang(raw) {
   const s = String(raw || "").toLowerCase();
@@ -117,7 +181,7 @@ function isWakeQuestion(text) {
   return enWho || enHow || enWhy;
 }
 
-// ✅ NEU: Sprache für Wake-Fragen robust bestimmen (unabhängig von langUsed)
+// ✅ Sprache für Wake-Fragen robust bestimmen (unabhängig von langUsed)
 function detectWakeLang(text, fallbackLang = "de") {
   const t = String(text || "")
     .toLowerCase()
@@ -431,7 +495,10 @@ async function getWikidataContext(userText, lang) {
   const entUrl =
     `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${encodeURIComponent(
       qid
-    )}` + `&props=labels|descriptions&languages=${encodeURIComponent(lang)}&format=json&origin=*`;
+    )}` +
+    `&props=labels|descriptions&languages=${encodeURIComponent(
+      lang
+    )}&format=json&origin=*`;
 
   try {
     const rr = await fetchWithTimeout(entUrl, WD_TIMEOUT_MS);
@@ -471,10 +538,25 @@ app.post("/ask", async (req, res) => {
       typeof req.body?.lang === "string" && req.body.lang.trim().length > 0;
     const langClient = hasClientLang ? normalizeLang(req.body.lang) : null;
 
+    const conversationId =
+      typeof req.body?.conversationId === "string"
+        ? req.body.conversationId.trim()
+        : null;
+
     const userText = String(userTextRaw || "").trim();
 
+    const history = conversationId ? convGetHistoryMsgs(conversationId) : [];
+
     const langFromText = detectLanguageServer(userText);
-    const langUsed = langFromText || langClient || "de";
+    // Stabil: wenn unklar, nimm Client, sonst (wenn Dialog aktiv) letztes Gespräch, sonst "de"
+    const convObj = conversationId ? convGet(conversationId) : null;
+    const langUsed =
+      langFromText ||
+      langClient ||
+      (convObj && convObj.lastLang ? convObj.lastLang : null) ||
+      "de";
+
+    if (convObj) convObj.lastLang = langUsed;
 
     console.log("🎙️ Eingabe vom Benutzer:", userText, "Sprache:", langUsed);
 
@@ -492,11 +574,16 @@ app.post("/ask", async (req, res) => {
     if (isWakeQuestion(userText)) {
       const wakeLang = detectWakeLang(userText, langUsed);
       const answer = forceSentenceEnd(wakeAnswer(wakeLang), wakeLang);
+
+      if (conversationId) {
+        convPush(conversationId, "user", userText);
+        convPush(conversationId, "assistant", answer);
+        const c = convGet(conversationId);
+        if (c) c.lastLang = wakeLang;
+      }
+
       return res.json({ answer, answerLang: wakeLang });
     }
-
-    // ✅ NEU: subjektive/in-character Fragen lockern (kein Wikidata-Zwang, keine Name/Jahr-Blockade)
-    const subjective = isSubjectiveInCharacterQuestion(userText, langUsed);
 
     // ✅ AfD-Sonderregel robust (AfD / A f D / A-F-D / A. F. D. / Alternative fuer Deutschland)
     const tLower = String(userText || "").toLowerCase();
@@ -518,8 +605,16 @@ app.post("/ask", async (req, res) => {
           ? "You name a party of your time and its quarrels. I, Frederick Barbarossa, will not judge modern factions from my ancient throne. My loyal minister Nikolaus Härtel mutters that such disputes age a man faster than any crusade, and I cannot wholly disagree. Ask me rather of empire, law, or the old tales of the Kaiserberg. Let this be my final word on that matter."
           : "Ihr nennt eine Partei Eurer Zeit und ihre Händel. Ich, Friedrich Barbarossa, richte nicht über die modernen Fraktionen von meinem alten Thron herab. Mein treuer Minister Nikolaus Härtel murrt, solcher Streit lasse einen schneller altern als ein Kreuzzug, und ich kann ihm kaum widersprechen. Fragt mich lieber nach Reich, Recht oder den alten Geschichten des Kaiserbergs. Dies sei mein abschließendes Wort zu diesem Thema.";
 
+      if (conversationId) {
+        convPush(conversationId, "user", userText);
+        convPush(conversationId, "assistant", answer);
+      }
+
       return res.json({ answer, answerLang: langUsed });
     }
+
+    // ✅ subjektive/in-character Fragen lockern (kein Wikidata-Zwang)
+    const subjective = isSubjectiveInCharacterQuestion(userText, langUsed);
 
     // ✅ Wikidata nur, wenn es sinnvoll ist (subjektive Fragen: weglassen)
     const wd = subjective ? null : await getWikidataContext(userText, langUsed);
@@ -543,6 +638,9 @@ Quelle: ${wd.url}`
         ? "Use the provided Wikidata snippet only if it clearly matches the question. If it is empty, unrelated, or unclear, do NOT invent specific facts (dates, names, places). You may answer in general terms and ask for clarification (name/place/year) if needed. Never fabricate historical details."
         : "Nutze den folgenden Wikidata-Auszug nur, wenn er klar zur Frage passt. Wenn er leer, unpassend oder unklar ist, erfinde KEINE konkreten Fakten (Daten, Namen, Orte). Du darfst allgemein antworten und um Präzisierung (Name/Ort/Jahr) bitten, falls nötig. Erfinde niemals historische Details.";
 
+    // Dialog: history nur, wenn conversationId vorhanden
+    const dialogHistory = conversationId ? history : [];
+
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
@@ -555,6 +653,7 @@ Quelle: ${wd.url}`
             "Wenn sie nicht passt oder unklar ist, sag das kurz.\n\n" +
             wdBlock,
         },
+        ...dialogHistory,
         { role: "user", content: userText },
       ],
       temperature: 0.6,
@@ -563,6 +662,11 @@ Quelle: ${wd.url}`
 
     let answer = completion?.choices?.[0]?.message?.content || "";
     answer = forceSentenceEnd(answer, langUsed);
+
+    if (conversationId) {
+      convPush(conversationId, "user", userText);
+      convPush(conversationId, "assistant", answer);
+    }
 
     console.log("💬 KI-Antwort:", answer);
     res.json({ answer, answerLang: langUsed });
