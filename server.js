@@ -88,7 +88,9 @@ function isWakeQuestion(text, lang) {
 
   // EN (robust, nicht nur exakte Wortfolge)
   return (
-    (/\bwho\b/.test(t) && (/\bwoke\b/.test(t) || /\bwoken\b/.test(t)) && /\byou\b/.test(t)) ||
+    (/\bwho\b/.test(t) &&
+      (/\bwoke\b/.test(t) || /\bwoken\b/.test(t)) &&
+      /\byou\b/.test(t)) ||
     (/\bhow\b/.test(t) && (t.includes("wake up") || t.includes("woke up"))) ||
     (/\bwhy\b/.test(t) && (t.includes("wake up") || t.includes("woke up")))
   );
@@ -119,12 +121,22 @@ function detectLanguageServer(text) {
   if (/[äöüß]/.test(t0)) return "de";
 
   // harte Satzanfang-Regeln (Fragewörter)
-  if (/^(was|wer|wen|wem|wessen|wie|wo|wohin|woher|wann|warum|wieso|weshalb)\b/.test(t)) return "de";
+  if (
+    /^(was|wer|wen|wem|wessen|wie|wo|wohin|woher|wann|warum|wieso|weshalb)\b/.test(
+      t
+    )
+  )
+    return "de";
   if (/^(what|why|where|when|who|whom|whose|which|how)\b/.test(t)) return "en";
 
   // ✅ typische Satzstarter (Imperativ) – sehr häufig im Museum
   // DE
-  if (/^(erzähl|erzaehl|sage|sag|nenn|nenne|erkläre|erklaere|beschreibe|zeige|sprich)\b/.test(t)) return "de";
+  if (
+    /^(erzähl|erzaehl|sage|sag|nenn|nenne|erkläre|erklaere|beschreibe|zeige|sprich)\b/.test(
+      t
+    )
+  )
+    return "de";
   // EN
   if (/^(tell|say|name|explain|describe|show|speak)\b/.test(t)) return "en";
 
@@ -139,14 +151,18 @@ function isSubjectiveInCharacterQuestion(text, lang) {
 
   if (lang === "de") {
     return (
-      /\b(am liebsten|liebst(en)?|lieblings|schmeckt|mochtest|möchtest|magst|liebt|liebe)\b/.test(t) ||
+      /\b(am liebsten|liebst(en)?|lieblings|schmeckt|mochtest|möchtest|magst|liebt|liebe)\b/.test(
+        t
+      ) ||
       /\b(hast du|habt ihr)\b/.test(t) ||
       /\b(gegessen|getrunken|genossen|gejagt)\b/.test(t)
     );
   }
 
   return (
-    /\b(favorite|favourite|like most|liked most|prefer|enjoyed|tasted)\b/.test(t) ||
+    /\b(favorite|favourite|like most|liked most|prefer|enjoyed|tasted)\b/.test(
+      t
+    ) ||
     /\b(did you like|have you ever)\b/.test(t) ||
     /\b(meat|food|drink)\b/.test(t)
   );
@@ -188,7 +204,10 @@ async function fetchWithTimeout(url, timeoutMs) {
 }
 
 function cleanQuery(q) {
-  return String(q || "").trim().replace(/\s+/g, " ").slice(0, 140);
+  return String(q || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .slice(0, 140);
 }
 
 function toEntityQuery(userText, lang) {
@@ -201,29 +220,134 @@ function toEntityQuery(userText, lang) {
   if (!t) return "";
 
   const stopDe = new Set([
-    "wer","wen","wem","wessen","was","wie","wo","wohin","woher","wann","warum","wieso","weshalb",
-    "ist","sind","war","waren","sei","seid","bin","bist",
-    "ich","du","ihr","wir","sie","er","es",
-    "mein","dein","euer","unser",
-    "bitte","danke",
-    "erkläre","erzähle","beschreibe","zeige","sage","sprich","nenn","nenne",
-    "der","die","das","ein","eine","einen","einem","einer","und","oder","aber","zu","zum","zur",
-    "im","in","am","an","auf","mit","ohne","von","für","über","nach","vor"
+    "wer",
+    "wen",
+    "wem",
+    "wessen",
+    "was",
+    "wie",
+    "wo",
+    "wohin",
+    "woher",
+    "wann",
+    "warum",
+    "wieso",
+    "weshalb",
+    "ist",
+    "sind",
+    "war",
+    "waren",
+    "sei",
+    "seid",
+    "bin",
+    "bist",
+    "ich",
+    "du",
+    "ihr",
+    "wir",
+    "sie",
+    "er",
+    "es",
+    "mein",
+    "dein",
+    "euer",
+    "unser",
+    "bitte",
+    "danke",
+    "erkläre",
+    "erzähle",
+    "beschreibe",
+    "zeige",
+    "sage",
+    "sprich",
+    "nenn",
+    "nenne",
+    "der",
+    "die",
+    "das",
+    "ein",
+    "eine",
+    "einen",
+    "einem",
+    "einer",
+    "und",
+    "oder",
+    "aber",
+    "zu",
+    "zum",
+    "zur",
+    "im",
+    "in",
+    "am",
+    "an",
+    "auf",
+    "mit",
+    "ohne",
+    "von",
+    "für",
+    "über",
+    "nach",
+    "vor",
   ]);
 
   const stopEn = new Set([
-    "what","why","where","when","who","whom","whose","which","how",
-    "is","are","was","were","be","been",
-    "i","you","we","they","he","she","it",
-    "my","your","our","their",
-    "please","thanks","thank",
-    "tell","explain","describe","show","say","speak","name",
-    "the","a","an","and","or","but","to","in","on","at","with","without","from","about","after","before"
+    "what",
+    "why",
+    "where",
+    "when",
+    "who",
+    "whom",
+    "whose",
+    "which",
+    "how",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "i",
+    "you",
+    "we",
+    "they",
+    "he",
+    "she",
+    "it",
+    "my",
+    "your",
+    "our",
+    "their",
+    "please",
+    "thanks",
+    "thank",
+    "tell",
+    "explain",
+    "describe",
+    "show",
+    "say",
+    "speak",
+    "name",
+    "the",
+    "a",
+    "an",
+    "and",
+    "or",
+    "but",
+    "to",
+    "in",
+    "on",
+    "at",
+    "with",
+    "without",
+    "from",
+    "about",
+    "after",
+    "before",
   ]);
 
-  const stop = (lang === "en") ? stopEn : stopDe;
+  const stop = lang === "en" ? stopEn : stopDe;
 
-  const words = t.split(" ").filter(w => w && !stop.has(w));
+  const words = t.split(" ").filter((w) => w && !stop.has(w));
   return words.slice(0, 6).join(" ").slice(0, 80);
 }
 
@@ -238,7 +362,9 @@ async function getWikidataContext(userText, lang) {
   if (cached !== null) return cached;
 
   const searchUrl =
-    `https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(q)}` +
+    `https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(
+      q
+    )}` +
     `&language=${encodeURIComponent(lang)}&uselang=${encodeURIComponent(lang)}` +
     `&format=json&limit=1&origin=*`;
 
@@ -260,8 +386,9 @@ async function getWikidataContext(userText, lang) {
   }
 
   const entUrl =
-    `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${encodeURIComponent(qid)}` +
-    `&props=labels|descriptions&languages=${encodeURIComponent(lang)}&format=json&origin=*`;
+    `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${encodeURIComponent(
+      qid
+    )}` + `&props=labels|descriptions&languages=${encodeURIComponent(lang)}&format=json&origin=*`;
 
   try {
     const rr = await fetchWithTimeout(entUrl, WD_TIMEOUT_MS);
@@ -327,20 +454,20 @@ app.post("/ask", async (req, res) => {
     // ✅ NEU: subjektive/in-character Fragen lockern (kein Wikidata-Zwang, keine Name/Jahr-Blockade)
     const subjective = isSubjectiveInCharacterQuestion(userText, langUsed);
 
+    // ✅ AfD-Sonderregel robust (AfD / A f D / A-F-D / A. F. D. / Alternative fuer Deutschland)
     const tLower = String(userText || "").toLowerCase();
 
-// Umlaut-Varianten robust machen (für "fuer")
-const tUml = tLower
-  .replace(/ä/g, "ae")
-  .replace(/ö/g, "oe")
-  .replace(/ü/g, "ue")
-  .replace(/ß/g, "ss");
+    const tUml = tLower
+      .replace(/ä/g, "ae")
+      .replace(/ö/g, "oe")
+      .replace(/ü/g, "ue")
+      .replace(/ß/g, "ss");
 
-// "AfD" auch als "A f D", "A-F-D", "A. F. D." etc. erkennen
-const mentionsAfd =
-  /\ba\W*f\W*d\b/i.test(tLower) ||
-  tLower.includes("alternative für deutschland") ||
-  tUml.includes("alternative fuer deutschland");
+    const mentionsAfd =
+      /\ba\W*f\W*d\b/i.test(tLower) ||
+      tLower.includes("alternative für deutschland") ||
+      tUml.includes("alternative fuer deutschland");
+
     if (mentionsAfd) {
       const answer =
         langUsed === "en"
@@ -365,12 +492,12 @@ Quelle: ${wd.url}`
         : "Du bist Kaiser Friedrich Barbarossa, der nach fast neunhundert Jahren des Schlummers im Kaiserberg zu Lautern erwacht ist. Antworte weise und leicht altertümlich, mit kleinen Scherzen. Füge eine scherzhafte Bemerkung deines treuen Minister Nikolaus Härtel an. Genau 5 Sätze. Beende immer mit einem vollständigen Satz.";
 
     const groundingRule = subjective
-      ? (langUsed === "en"
-          ? "If the user asks about your personal taste, memories, or preferences, you may answer freely in character. Do not present invented details (exact dates/places) as certain facts. Use hedging like 'I recall' or 'I would say'."
-          : "Wenn der Nutzer nach persönlichem Geschmack, Erinnerungen oder Vorlieben fragt, darfst du frei in der Rolle antworten. Stelle erfundene Details (exakte Daten/Orte) nicht als sichere Fakten dar. Nutze Formulierungen wie 'ich erinnere mich' oder 'ich würde sagen'.")
-      : (langUsed === "en"
-          ? "Use the provided Wikidata snippet only if it clearly matches the question. If it is empty, unrelated, or unclear, do NOT invent specific facts (dates, names, places). You may answer in general terms and ask for clarification (name/place/year) if needed. Never fabricate historical details."
-          : "Nutze den folgenden Wikidata-Auszug nur, wenn er klar zur Frage passt. Wenn er leer, unpassend oder unklar ist, erfinde KEINE konkreten Fakten (Daten, Namen, Orte). Du darfst allgemein antworten und um Präzisierung (Name/Ort/Jahr) bitten, falls nötig. Erfinde niemals historische Details.");
+      ? langUsed === "en"
+        ? "If the user asks about your personal taste, memories, or preferences, you may answer freely in character. Do not present invented details (exact dates/places) as certain facts. Use hedging like 'I recall' or 'I would say'."
+        : "Wenn der Nutzer nach persönlichem Geschmack, Erinnerungen oder Vorlieben fragt, darfst du frei in der Rolle antworten. Stelle erfundene Details (exakte Daten/Orte) nicht als sichere Fakten dar. Nutze Formulierungen wie 'ich erinnere mich' oder 'ich würde sagen'."
+      : langUsed === "en"
+        ? "Use the provided Wikidata snippet only if it clearly matches the question. If it is empty, unrelated, or unclear, do NOT invent specific facts (dates, names, places). You may answer in general terms and ask for clarification (name/place/year) if needed. Never fabricate historical details."
+        : "Nutze den folgenden Wikidata-Auszug nur, wenn er klar zur Frage passt. Wenn er leer, unpassend oder unklar ist, erfinde KEINE konkreten Fakten (Daten, Namen, Orte). Du darfst allgemein antworten und um Präzisierung (Name/Ort/Jahr) bitten, falls nötig. Erfinde niemals historische Details.";
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -410,4 +537,3 @@ app.use((req, res) => {
 app.listen(PORT, () => {
   console.log(`✅ Server läuft auf Port ${PORT}`);
 });
-
