@@ -277,6 +277,26 @@ let buttonLocked = false;
 let mouthCooldown = false;
 let greetTimeout = null;
 
+/* ===============================
+   DIALOG-SESSION (NEU)
+   Ermöglicht echte Unterhaltung
+================================ */
+
+// Ob gerade eine Gesprächssession aktiv ist
+let SESSION_ACTIVE = false;
+
+// Zeitpunkt der letzten Nutzeraktivität
+let SESSION_LAST_TS = 0;
+
+// Eindeutige Gesprächs-ID (wird bei StartInteraction gesetzt)
+let CONV_ID = null;
+
+// Hilfsfunktion: neue Conversation-ID erzeugen
+function createConversationId() {
+  return "conv_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+
+greetTimeout = null;
+
 // === Voice-Auswahl (GLOBAL) – plattformsicher ===
 let englishVoice = null;
 let germanVoice  = null;
@@ -788,13 +808,16 @@ function ensureRecognition() {
 
       speak(thinkPhrase, true, (detectedLanguage === "en") ? "en" : "de");
 
-      // Server-Request (lang als Fallback mitsenden)
+ // Server-Request (lang als Fallback mitsenden)
+      try { if (SESSION_ACTIVE) SESSION_LAST_TS = Date.now(); } catch (e) {}
+
       fetch("/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           text: lastTranscript,
-          lang: detectedLanguage
+          lang: detectedLanguage,
+          conversationId: (typeof CONV_ID !== "undefined" && CONV_ID) ? CONV_ID : null
         })
       })
       .then(r => r.json())
@@ -841,7 +864,7 @@ function ensureRecognition() {
 }
 
 /* -----------------------------
-   RECOGNITION STARTEN (MUSEUM-STABIL)
+   RECOGNITION STARTEN (MUSEUM-STABIL + DIALOG)
    Default: de-DE
    EN nur nach echter EN-Erkennung
 ----------------------------- */
@@ -853,6 +876,13 @@ function startRecognition() {
     recRunning = false;
     return;
   }
+
+  // Dialog-Session-Zeit aktualisieren
+  try {
+    if (typeof SESSION_ACTIVE !== "undefined" && SESSION_ACTIVE) {
+      SESSION_LAST_TS = Date.now();
+    }
+  } catch {}
 
   // Museum-Default
   let recLang = "de-DE";
@@ -875,6 +905,7 @@ function startRecognition() {
   }
 
   recRunning = true;
+
   try {
     r.start();
   } catch (e) {
@@ -906,6 +937,39 @@ function startRecognition() {
       }
     }, 250);
   }
+}
+
+/* -----------------------------
+   SESSION TIMEOUT CHECK (DIALOG)
+   Beendet Gespräch sauber nach Inaktivität
+----------------------------- */
+
+if (typeof window._dialogTimeoutInit === "undefined") {
+  window._dialogTimeoutInit = true;
+
+  setInterval(() => {
+    try {
+      if (!SESSION_ACTIVE) return;
+
+      const now = Date.now();
+      const MAX_IDLE = 90000; // 90 Sekunden Museum-tauglich
+
+      if (now - SESSION_LAST_TS > MAX_IDLE) {
+        // Session beenden
+        SESSION_ACTIVE = false;
+        CONV_ID = null;
+
+        // Greeting wieder aktivieren
+        greeted = false;
+
+        STATE = "idle";
+
+        if (typeof hideHint === "function") hideHint();
+
+        try { console.log("🕯️ Dialog-Session automatisch beendet (Timeout)."); } catch {}
+      }
+    } catch {}
+  }, 2000);
 }
 /* -----------------------------
    BUTTON + ENTER – GREET & LISTEN
@@ -981,6 +1045,14 @@ function startInteraction() {
   =============================== */
   if (STATE === "idle" && !greeted) {
 
+    // === 🔹 DIALOG SESSION START (NEU) ===
+    if (!SESSION_ACTIVE) {
+      SESSION_ACTIVE = true;
+      SESSION_LAST_TS = Date.now();
+      CONV_ID = createConversationId();
+      console.log("🗣️ Neue Dialog-Session:", CONV_ID);
+    }
+
     // Voice-Warmup
     try {
       const voicesReady =
@@ -1018,6 +1090,7 @@ function startInteraction() {
     if (greetTimeout) clearTimeout(greetTimeout);
     greetTimeout = setTimeout(() => {
       healIfStuck("greet-timeout-check");
+
       if (STATE === "greet" && !recRunning && !talking) {
         console.log("⏳ Begrüßung ohne Reaktion – Reset auf Startzustand");
 
@@ -1027,6 +1100,10 @@ function startInteraction() {
         STATE = "idle";
 
         try { hideHint(); } catch (e) {}
+
+        // === 🔹 SESSION ENDE (NEU) ===
+        SESSION_ACTIVE = false;
+        CONV_ID = null;
 
         if (model) {
           model.position.y = baseY;
@@ -1050,6 +1127,11 @@ function startInteraction() {
       return;
     }
 
+    // === 🔹 Session aktiv halten (NEU) ===
+    if (SESSION_ACTIVE) {
+      SESSION_LAST_TS = Date.now();
+    }
+
     // Hint sofort weg beim Start Listening
     try { hideHint(); } catch (e) {}
 
@@ -1066,15 +1148,13 @@ function startInteraction() {
 
     // Falls Recognition nicht startet → zurück zu greet + Hint
     setTimeout(() => {
-      // nochmal heilen (falls Chrome Sessions verschluckt)
       healIfStuck("listen-start-guard");
 
       if (STATE === "listen" && !recRunning) {
         console.warn("⚠️ Recognition start fehlgeschlagen – Fallback auf greet");
         STATE = "greet";
         resetMovements();
-        try { showHint("Kurz Knopf drücken, dann in einem kurzen, vollständigen Satz fragen"); } catch (e) {}
-      }
+        try { showHint("Kurz Knopf drücken, dann in einem kurzen, vollständigen Satz fragen"); } catch (e) {} }
     }, 900);
 
     return;
@@ -1193,8 +1273,8 @@ document.addEventListener("visibilitychange", () => {
 });
   
 /* -----------------------------
-   SPEAK – FINAL (VISEME-STABIL) – FIXED v3
-   (SERVER LANG PRIO + EN PITCH 0.6 + cancelt nur wenn speaking/pending)
+   SPEAK – FINAL (VISEME-STABIL) – FIXED v3 (DIALOG-SAFE)
+   (SERVER LANG PRIO + EN OFFLINE-VOICE + cancelt nur wenn speaking/pending)
 ----------------------------- */
 function speak(text, slow = false, forceLang = null, onEnd = null) {
 
@@ -1208,51 +1288,51 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
   const u = new SpeechSynthesisUtterance(text);
 
   // Sprache bestimmen: forceLang (vom Server) hat Priorität, sonst museum-default "de"
-const lang = (forceLang === "en") ? "en" : "de";
-u.lang = (lang === "en") ? "en-US" : "de-DE";
+  const lang = (forceLang === "en") ? "en" : "de";
+  u.lang = (lang === "en") ? "en-US" : "de-DE";
 
-// Stimme setzen (DE: maleVoice priorisiert)
-if (lang === "en") {
-  let v = (typeof englishVoice !== "undefined" && englishVoice) ? englishVoice : null;
+  // Stimme setzen (DE: maleVoice priorisiert)
+  if (lang === "en") {
+    let v = (typeof englishVoice !== "undefined" && englishVoice) ? englishVoice : null;
 
-  const isOnline = (name) => /Online/i.test(name || "");
-  const isAva = (name) => /\bAva\b/i.test(name || "");
+    const isOnline = (name) => /Online/i.test(name || "");
+    const isAva = (name) => /\bAva\b/i.test(name || "");
 
-  // Ava oder Online grundsätzlich NICHT erlauben
-  if (v && (isOnline(v.name) || isAva(v.name))) {
-    v = null;
+    // Ava oder Online grundsätzlich NICHT erlauben
+    if (v && (isOnline(v.name) || isAva(v.name))) {
+      v = null;
+    }
+
+    if (!v) {
+      const voices = speechSynthesis.getVoices();
+
+      // Nur OFFLINE englische Stimmen zulassen (nicht Online, nicht Ava)
+      const fallback =
+        voices.find(x =>
+          x.lang === "en-US" &&
+          !isOnline(x.name) &&
+          !isAva(x.name)
+        ) ||
+        voices.find(x =>
+          (x.lang || "").startsWith("en") &&
+          !isOnline(x.name) &&
+          !isAva(x.name)
+        ) ||
+        null;
+
+      if (fallback) v = fallback;
+    }
+
+    u.voice = v || null;
+
+  } else {
+    const mv = (typeof maleVoice !== "undefined" && maleVoice) ? maleVoice : null;
+    const gv = (typeof germanVoice !== "undefined" && germanVoice) ? germanVoice : null;
+    u.voice = mv || gv || null;
   }
-
-  if (!v) {
-    const voices = speechSynthesis.getVoices();
-
-    // Nur OFFLINE englische Stimmen zulassen
-    const fallback =
-      voices.find(x =>
-        x.lang === "en-US" &&
-        !isOnline(x.name) &&
-        !isAva(x.name)
-      ) ||
-      voices.find(x =>
-        (x.lang || "").startsWith("en") &&
-        !isOnline(x.name) &&
-        !isAva(x.name)
-      ) ||
-      null;
-
-    if (fallback) v = fallback;
-  }
-
-  u.voice = v || null;
-
-} else {
-  const mv = (typeof maleVoice !== "undefined" && maleVoice) ? maleVoice : null;
-  const gv = (typeof germanVoice !== "undefined" && germanVoice) ? germanVoice : null;
-  u.voice = mv || gv || null;
-}
 
   // Pitch/Rate
-  u.pitch = (lang === "en") ? 1.0 : 1.0;
+  u.pitch = 1.0;
   u.rate  = (lang === "en") ? 0.92 : (slow ? 0.85 : 1.0);
 
   const isGreeting = (STATE === "greet");
@@ -1357,6 +1437,13 @@ if (lang === "en") {
     hardStopToRest();
     talking = false;
 
+    // Dialog: Aktivität aktualisieren (verhindert Timeout direkt nach Antwort)
+    try {
+      if (typeof SESSION_ACTIVE !== "undefined" && SESSION_ACTIVE) {
+        SESSION_LAST_TS = Date.now();
+      }
+    } catch (e) {}
+
     mouthCooldown = true;
     setTimeout(() => { mouthCooldown = false; }, 120);
 
@@ -1368,11 +1455,22 @@ if (lang === "en") {
 
     if (STATE === "answer") {
       resetMovements();
-      greeted = false;
       hmNeigen = false;
       rising = false;
-      STATE = "idle";
-      if (typeof hideHint === "function") hideHint();
+
+      // ✅ DIALOG: nach Antwort NICHT zurück auf idle (sonst Greeting wird neu getriggert)
+      // Stattdessen zurück in "greet" (bereit für nächsten Knopfdruck → listen)
+      if (typeof SESSION_ACTIVE !== "undefined" && SESSION_ACTIVE) {
+        STATE = "greet";
+        greeted = true;
+        if (typeof showHint === "function") {
+          showHint("Kurz Knopf drücken, dann in einem kurzen, vollständigen Satz fragen");
+        }
+      } else {
+        greeted = false;
+        STATE = "idle";
+        if (typeof hideHint === "function") hideHint();
+      }
     }
 
     if (onEnd && typeof onEnd === "function") {
