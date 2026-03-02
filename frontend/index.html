@@ -377,7 +377,6 @@ function resetMovements() {
   hmNeigen = false;
   rising = false;
   toIdlePose = false;
-}toIdlePose = false;
 }
 
  // ===============================
@@ -427,7 +426,7 @@ function detectLanguage(text) {
     "kaiser","könig","rom","deutschland","italien","kreuzzug","kirche",
     "bitte","danke","hallo","guten","tag"
   ]);
-
+  
   let e = 0, d = 0;
   for (const w of tokens) {
     if (en.has(w)) e++;
