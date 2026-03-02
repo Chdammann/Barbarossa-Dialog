@@ -886,46 +886,103 @@ function ensureRecognition() {
     if (!talking) {
       clearInterval(waitForThinkEnd);
 
-      STATE = "answer";
+      STATE = "think";
       resetMovements();
 
-      rising = true;
-      riseStartTime = performance.now();
+      requestAnimationFrame(() => {
+        hmNeigen = true;
+        hmStartTime = performance.now();
+      });
 
-      // Sprache aus Serverantwort übernehmen
-      let answerLang = "de";
-      if (data && (data.answerLang === "en" || data.answerLang === "de")) {
-        answerLang = data.answerLang;
-      }
+      // Think-Phrase DE/EN
+      const thinkPhrase =
+        (detectedLanguage === "en")
+          ? "One moment, please."
+          : "Ähm … einen Moment bitte.";
 
-      // ✅ NEU: Server kann Session-Ende signalisieren
-      const endedByServer = !!(data && data.ended === true);
+      // ✅ Think-Phrase nur, wenn es wirklich dauert
+      const THINK_DELAY_MS = 800;          // ab wann überhaupt sprechen
+      const MIN_THINK_GAP_MS = 450;        // nach Think nicht sofort abwürgen (optional)
 
-      if (endedByServer) {
-        // Session hart beenden (damit kein Auto-Listen mehr triggert)
-        try { SESSION_ACTIVE = false; } catch (e) {}
-        try { CONV_ID = null; } catch (e) {}
+      let thinkTimer = null;
+      let thinkStartedAt = 0;
+      let thinkWasSpoken = false;
 
-        // optionaler Marker, falls du ihn in speak() prüfen willst
-        try { window._SESSION_ENDED = true; } catch (e) {}
+      thinkTimer = setTimeout(() => {
+        // nur wenn wir noch wirklich "denken" und noch nichts anderes läuft
+        if (STATE !== "think") return;
+        if (talking) return;
 
-        // UI zurücksetzen
-        try { if (typeof hideHint === "function") hideHint(); } catch (e) {}
-        greeted = false;
-      } else {
-        // Session läuft weiter
-        try { window._SESSION_ENDED = false; } catch (e) {}
+        thinkWasSpoken = true;
+        thinkStartedAt = Date.now();
 
-        // Engine-Hilfe aktualisieren (stabilisiert Folgeerkennung)
-        detectedLanguage = answerLang;
-      }
+        speak(
+          thinkPhrase,
+          true,
+          (detectedLanguage === "en") ? "en" : "de"
+        );
+      }, THINK_DELAY_MS);
 
-      speak(data.answer, false, answerLang);
-    }
-  }, 120);
+      // Server-Request (lang als Fallback mitsenden)
+      try { if (SESSION_ACTIVE) SESSION_LAST_TS = Date.now(); } catch (e) {}
 
-})
+      fetch("/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: lastTranscript,
+          lang: detectedLanguage,
+          conversationId: (typeof CONV_ID !== "undefined" && CONV_ID) ? CONV_ID : null
+        })
+      })
+      .then(r => r.json())
+      .then(data => {
+
+        // ✅ Wenn Antwort schnell da: Think-Timer stoppen, es wurde nichts gesagt
+        if (thinkTimer) {
+          clearTimeout(thinkTimer);
+          thinkTimer = null;
+        }
+
+        // optional: wenn Think bereits gesprochen wurde, minimalen Abstand geben
+        const extraDelay =
+          (thinkWasSpoken && thinkStartedAt)
+            ? Math.max(0, MIN_THINK_GAP_MS - (Date.now() - thinkStartedAt))
+            : 0;
+
+        setTimeout(() => {
+          const waitForThinkEnd = setInterval(() => {
+            if (!talking) {
+              clearInterval(waitForThinkEnd);
+
+              STATE = "answer";
+              resetMovements();
+
+              rising = true;
+              riseStartTime = performance.now();
+
+              // Sprache aus Serverantwort übernehmen
+              let answerLang = "de";
+              if (data && (data.answerLang === "en" || data.answerLang === "de")) {
+                answerLang = data.answerLang;
+              }
+
+              // Engine-Hilfe aktualisieren (stabilisiert Folgeerkennung)
+              detectedLanguage = answerLang;
+
+              speak(data.answer, false, answerLang);
+            }
+          }, 120);
+        }, extraDelay);
+
+      })
       .catch(() => {
+
+        if (thinkTimer) {
+          clearTimeout(thinkTimer);
+          thinkTimer = null;
+        }
+
         STATE = "answer";
         resetMovements();
 
