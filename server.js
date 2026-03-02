@@ -56,9 +56,17 @@ const CONV_STORE = new Map(); // id -> { ts, lastLang, msgs: [{role, content}] }
 
 const CONV_TTL_MS = 20 * 60 * 1000; // 20 min
 const CONV_MAX_MSGS = 12; // max messages (user+assistant), e.g. 6 turns
+const CONV_ID_MAXLEN = 80;
 
 function convNow() {
   return Date.now();
+}
+
+function normalizeConvId(raw) {
+  if (typeof raw !== "string") return null;
+  const id = raw.trim();
+  if (!id) return null;
+  return id.slice(0, CONV_ID_MAXLEN);
 }
 
 function convPruneExpired() {
@@ -108,6 +116,12 @@ function convGetHistoryMsgs(id) {
   const c = convGet(id);
   if (!c) return [];
   return Array.isArray(c.msgs) ? c.msgs : [];
+}
+
+function convEnd(id) {
+  const key = normalizeConvId(id);
+  if (!key) return;
+  CONV_STORE.delete(key);
 }
 
 // --- Helpers ---
@@ -251,7 +265,7 @@ function detectLanguageServer(text) {
   return null;
 }
 
-// ✅ NEU: Subjektive / in-character Fragen erkennen (Geschmack, Vorlieben, Erinnerung)
+// ✅ Subjektive / in-character Fragen erkennen (Geschmack, Vorlieben, Erinnerung)
 function isSubjectiveInCharacterQuestion(text, lang) {
   const t = String(text || "").toLowerCase().trim();
   if (!t) return false;
@@ -273,6 +287,47 @@ function isSubjectiveInCharacterQuestion(text, lang) {
     /\b(did you like|have you ever)\b/.test(t) ||
     /\b(meat|food|drink)\b/.test(t)
   );
+}
+
+/* ===============================
+   ✅ END-OF-CONVERSATION DETECTION (NEU)
+================================ */
+
+function normalizeForIntent(text) {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s-]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function userEndedConversation(text, lang) {
+  const t = normalizeForIntent(text);
+  if (!t) return false;
+
+  if (lang === "en") {
+    return (
+      /\b(thanks|thank you|thx|cheers)\b/.test(t) ||
+      /\b(bye|goodbye|see you|farewell)\b/.test(t) ||
+      /\b(that s all|that is all|that was all|no more questions|i m done|im done|we re done|we are done)\b/.test(t) ||
+      /\b(stop|end (the )?conversation|finish)\b/.test(t)
+    );
+  }
+
+  // DE
+  return (
+    /\b(danke|dankeschön|danke schön|merci|besten dank)\b/.test(t) ||
+    /\b(tschüss|tschues?s|ciao|auf wiedersehen|bis bald|bis dann)\b/.test(t) ||
+    /\b(das war s|das ist alles|das wär s|das wäre s|keine weiteren fragen|keine frage mehr|ich bin fertig|wir sind fertig)\b/.test(t) ||
+    /\b(stopp|stop|beenden|ende)\b/.test(t)
+  );
+}
+
+function endConversationAnswer(lang) {
+  if (lang === "en") {
+    return "Very well—then I shall fall quiet again for a moment. My loyal minister Nikolaus Härtel insists this is the dignified way to end a talk, and I am inclined to agree. Farewell, and press the button whenever you wish to wake me again.";
+  }
+  return "Sehr wohl – dann will ich nun wieder einen Augenblick still sein. Mein treuer Minister Nikolaus Härtel meint, so ende ein Gespräch mit Würde, und ich gebe ihm recht. Lebt wohl, und drückt den Knopf, wann immer Ihr mich wieder rufen wollt.";
 }
 
 /* ===============================
@@ -327,129 +382,24 @@ function toEntityQuery(userText, lang) {
   if (!t) return "";
 
   const stopDe = new Set([
-    "wer",
-    "wen",
-    "wem",
-    "wessen",
-    "was",
-    "wie",
-    "wo",
-    "wohin",
-    "woher",
-    "wann",
-    "warum",
-    "wieso",
-    "weshalb",
-    "ist",
-    "sind",
-    "war",
-    "waren",
-    "sei",
-    "seid",
-    "bin",
-    "bist",
-    "ich",
-    "du",
-    "ihr",
-    "wir",
-    "sie",
-    "er",
-    "es",
-    "mein",
-    "dein",
-    "euer",
-    "unser",
-    "bitte",
-    "danke",
-    "erkläre",
-    "erzähle",
-    "beschreibe",
-    "zeige",
-    "sage",
-    "sprich",
-    "nenn",
-    "nenne",
-    "der",
-    "die",
-    "das",
-    "ein",
-    "eine",
-    "einen",
-    "einem",
-    "einer",
-    "und",
-    "oder",
-    "aber",
-    "zu",
-    "zum",
-    "zur",
-    "im",
-    "in",
-    "am",
-    "an",
-    "auf",
-    "mit",
-    "ohne",
-    "von",
-    "für",
-    "über",
-    "nach",
-    "vor",
+    "wer","wen","wem","wessen","was","wie","wo","wohin","woher","wann","warum","wieso","weshalb",
+    "ist","sind","war","waren","sei","seid","bin","bist",
+    "ich","du","ihr","wir","sie","er","es",
+    "mein","dein","euer","unser",
+    "bitte","danke",
+    "erkläre","erzähle","beschreibe","zeige","sage","sprich","nenn","nenne",
+    "der","die","das","ein","eine","einen","einem","einer","und","oder","aber","zu","zum","zur",
+    "im","in","am","an","auf","mit","ohne","von","für","über","nach","vor"
   ]);
 
   const stopEn = new Set([
-    "what",
-    "why",
-    "where",
-    "when",
-    "who",
-    "whom",
-    "whose",
-    "which",
-    "how",
-    "is",
-    "are",
-    "was",
-    "were",
-    "be",
-    "been",
-    "i",
-    "you",
-    "we",
-    "they",
-    "he",
-    "she",
-    "it",
-    "my",
-    "your",
-    "our",
-    "their",
-    "please",
-    "thanks",
-    "thank",
-    "tell",
-    "explain",
-    "describe",
-    "show",
-    "say",
-    "speak",
-    "name",
-    "the",
-    "a",
-    "an",
-    "and",
-    "or",
-    "but",
-    "to",
-    "in",
-    "on",
-    "at",
-    "with",
-    "without",
-    "from",
-    "about",
-    "after",
-    "before",
+    "what","why","where","when","who","whom","whose","which","how",
+    "is","are","was","were","be","been",
+    "i","you","we","they","he","she","it",
+    "my","your","our","their",
+    "please","thanks","thank",
+    "tell","explain","describe","show","say","speak","name",
+    "the","a","an","and","or","but","to","in","on","at","with","without","from","about","after","before"
   ]);
 
   const stop = lang === "en" ? stopEn : stopDe;
@@ -469,9 +419,7 @@ async function getWikidataContext(userText, lang) {
   if (cached !== null) return cached;
 
   const searchUrl =
-    `https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(
-      q
-    )}` +
+    `https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(q)}` +
     `&language=${encodeURIComponent(lang)}&uselang=${encodeURIComponent(lang)}` +
     `&format=json&limit=1&origin=*`;
 
@@ -493,12 +441,8 @@ async function getWikidataContext(userText, lang) {
   }
 
   const entUrl =
-    `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${encodeURIComponent(
-      qid
-    )}` +
-    `&props=labels|descriptions&languages=${encodeURIComponent(
-      lang
-    )}&format=json&origin=*`;
+    `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${encodeURIComponent(qid)}` +
+    `&props=labels|descriptions&languages=${encodeURIComponent(lang)}&format=json&origin=*`;
 
   try {
     const rr = await fetchWithTimeout(entUrl, WD_TIMEOUT_MS);
@@ -538,16 +482,14 @@ app.post("/ask", async (req, res) => {
       typeof req.body?.lang === "string" && req.body.lang.trim().length > 0;
     const langClient = hasClientLang ? normalizeLang(req.body.lang) : null;
 
-    const conversationId =
-      typeof req.body?.conversationId === "string"
-        ? req.body.conversationId.trim()
-        : null;
+    const conversationId = normalizeConvId(req.body?.conversationId);
 
     const userText = String(userTextRaw || "").trim();
 
     const history = conversationId ? convGetHistoryMsgs(conversationId) : [];
 
     const langFromText = detectLanguageServer(userText);
+
     // Stabil: wenn unklar, nimm Client, sonst (wenn Dialog aktiv) letztes Gespräch, sonst "de"
     const convObj = conversationId ? convGet(conversationId) : null;
     const langUsed =
@@ -568,6 +510,20 @@ app.post("/ask", async (req, res) => {
             : "Ich habe Euch nicht deutlich vernommen. Bitte fragt erneut.",
         answerLang: langUsed,
       });
+    }
+
+    // ✅ NEU: Ende erkannt -> kurze Abschiedsantwort ohne Rückfrage + Session löschen
+    if (userEndedConversation(userText, langUsed)) {
+      const answer = forceSentenceEnd(endConversationAnswer(langUsed), langUsed);
+
+      if (conversationId) {
+        // optional: noch loggen, aber Session danach löschen
+        convPush(conversationId, "user", userText);
+        convPush(conversationId, "assistant", answer);
+        convEnd(conversationId);
+      }
+
+      return res.json({ answer, answerLang: langUsed, ended: true });
     }
 
     // ✅ Sonderregel: Aufwecken-Fragen -> feste Antwort, kein OpenAI-Call
@@ -608,6 +564,8 @@ app.post("/ask", async (req, res) => {
       if (conversationId) {
         convPush(conversationId, "user", userText);
         convPush(conversationId, "assistant", answer);
+        const c = convGet(conversationId);
+        if (c) c.lastLang = langUsed;
       }
 
       return res.json({ answer, answerLang: langUsed });
@@ -666,6 +624,8 @@ Quelle: ${wd.url}`
     if (conversationId) {
       convPush(conversationId, "user", userText);
       convPush(conversationId, "assistant", answer);
+      const c = convGet(conversationId);
+      if (c) c.lastLang = langUsed;
     }
 
     console.log("💬 KI-Antwort:", answer);
@@ -685,5 +645,3 @@ app.use((req, res) => {
 app.listen(PORT, () => {
   console.log(`✅ Server läuft auf Port ${PORT}`);
 });
-
-
