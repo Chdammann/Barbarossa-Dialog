@@ -713,9 +713,10 @@ function animate() {
     );
   }
 
-  renderer.render(scene, camera);
+renderer.render(scene, camera);
 }
- function autoListenNextTurn(reason = "") {
+
+function autoListenNextTurn(reason = "") {
   // nur in Dialog-Session automatisch weiter
   try {
     if (typeof SESSION_ACTIVE !== "undefined" && !SESSION_ACTIVE) return;
@@ -752,7 +753,7 @@ function animate() {
     }, 900);
 
   }, 180);
-  } 
+}
 /* -----------------------------
    STATE MACHINE – RECOGNITION
    MIT THINK-PHASE (WAKE-SICHER) – FIXED v4
