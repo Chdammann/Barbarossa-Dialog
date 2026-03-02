@@ -1208,40 +1208,48 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
   const u = new SpeechSynthesisUtterance(text);
 
   // Sprache bestimmen: forceLang (vom Server) hat Priorität, sonst museum-default "de"
-  const lang = (forceLang === "en") ? "en" : "de";
-  u.lang = (lang === "en") ? "en-US" : "de-DE";
+const lang = (forceLang === "en") ? "en" : "de";
+u.lang = (lang === "en") ? "en-US" : "de-DE";
 
-  // Stimme setzen (DE: maleVoice priorisiert)
-  if (lang === "en") {
-    let v = (typeof englishVoice !== "undefined" && englishVoice) ? englishVoice : null;
+// Stimme setzen (DE: maleVoice priorisiert)
+if (lang === "en") {
+  let v = (typeof englishVoice !== "undefined" && englishVoice) ? englishVoice : null;
 
-    const isOnlineNatural = (name) => /Online\s*\(Natural\)/i.test(name || "");
-    const isAva = (name) => /\bAva\b/i.test(name || "");
+  const isOnline = (name) => /Online/i.test(name || "");
+  const isAva = (name) => /\bAva\b/i.test(name || "");
 
-    // Ava Online (Natural) immer ausschließen
-    if (v && (isOnlineNatural(v.name) || isAva(v.name))) {
-      v = null;
-    }
-
-    // Edge: Online (Natural) ignoriert häufig pitch/rate -> versuche Fallback
-    if (!v) {
-      const voices = speechSynthesis.getVoices();
-
-      // 1) gleiche Sprache, aber NICHT Online (Natural) und NICHT Ava
-      const fallback =
-        voices.find(x => x.lang === "en-US" && !isOnlineNatural(x.name) && !isAva(x.name)) ||
-        voices.find(x => (x.lang || "").startsWith("en") && !isOnlineNatural(x.name) && !isAva(x.name)) ||
-        null;
-
-      if (fallback) v = fallback;
-    }
-
-    u.voice = v;
-  } else {
-    const mv = (typeof maleVoice !== "undefined" && maleVoice) ? maleVoice : null;
-    const gv = (typeof germanVoice !== "undefined" && germanVoice) ? germanVoice : null;
-    u.voice = mv || gv || null;
+  // Ava oder Online grundsätzlich NICHT erlauben
+  if (v && (isOnline(v.name) || isAva(v.name))) {
+    v = null;
   }
+
+  if (!v) {
+    const voices = speechSynthesis.getVoices();
+
+    // Nur OFFLINE englische Stimmen zulassen
+    const fallback =
+      voices.find(x =>
+        x.lang === "en-US" &&
+        !isOnline(x.name) &&
+        !isAva(x.name)
+      ) ||
+      voices.find(x =>
+        (x.lang || "").startsWith("en") &&
+        !isOnline(x.name) &&
+        !isAva(x.name)
+      ) ||
+      null;
+
+    if (fallback) v = fallback;
+  }
+
+  u.voice = v || null;
+
+} else {
+  const mv = (typeof maleVoice !== "undefined" && maleVoice) ? maleVoice : null;
+  const gv = (typeof germanVoice !== "undefined" && germanVoice) ? germanVoice : null;
+  u.voice = mv || gv || null;
+}
 
   // Pitch/Rate
   u.pitch = (lang === "en") ? 0.6 : 1.0;
