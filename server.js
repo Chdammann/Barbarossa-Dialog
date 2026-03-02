@@ -219,10 +219,10 @@ function detectWakeLang(text, fallbackLang = "de") {
 
 function wakeAnswer(lang) {
   if (lang === "en") {
-    return "Christoph Dammann woke me up—thank you. I awoke because you pressed the button and called me from my long slumber. And why? Because I am glad to work here now as an avatar in the city museum, ready for your questions. Ask on, and I shall answer.";
+    return "Christoph Dammann woke me up - I am grateful. Now I am glad to work here as an avatar in the city museum, ready for your questions.";
   }
 
-  return "Mich hat Christoph Dammann aufgeweckt – ich danke dafür. Ich bin aufgewacht, weil Ihr den Knopf gedrückt und mich aus langem Schlummer gerufen habt. Und warum? Weil ich nun gern als Avatar im Stadtmuseum arbeite und für Eure Fragen bereit bin. Fragt nur, ich will antworten.";
+  return "Mich hat Christoph Dammann aufgeweckt – ich danke ihm dafür. Nun arbeite ich gern als Avatar im Stadtmuseum und bin für Eure Fragen bereit.";
 }
 
 // ✅ ROBUST: Sprache primär über Satzanfang bestimmen (Fragewörter + Imperativ-Starter)
@@ -645,3 +645,4 @@ app.use((req, res) => {
 app.listen(PORT, () => {
   console.log(`✅ Server läuft auf Port ${PORT}`);
 });
+
