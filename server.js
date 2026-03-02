@@ -117,6 +117,28 @@ function isWakeQuestion(text) {
   return enWho || enHow || enWhy;
 }
 
+// ✅ NEU: Sprache für Wake-Fragen robust bestimmen (unabhängig von langUsed)
+function detectWakeLang(text, fallbackLang = "de") {
+  const t = String(text || "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s-]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!t) return fallbackLang;
+
+  const enMarkers =
+    /\bwho\b/.test(t) ||
+    /\bhow\b/.test(t) ||
+    /\bwhy\b/.test(t) ||
+    /\byou\b/.test(t) ||
+    /\b(woke|woken|awoke|awakened|awaken)\b/.test(t) ||
+    /\b(wake\s*up|woke\s*up)\b/.test(t);
+
+  if (enMarkers) return "en";
+  return "de";
+}
+
 function wakeAnswer(lang) {
   if (lang === "en") {
     return "Christoph Dammann woke me up—thank you. I awoke because you pressed the button and called me from my long slumber. And why? Because I am glad to work here now as an avatar in the city museum, ready for your questions. Ask on, and I shall answer.";
@@ -468,8 +490,9 @@ app.post("/ask", async (req, res) => {
 
     // ✅ Sonderregel: Aufwecken-Fragen -> feste Antwort, kein OpenAI-Call
     if (isWakeQuestion(userText)) {
-      const answer = forceSentenceEnd(wakeAnswer(langUsed), langUsed);
-      return res.json({ answer, answerLang: langUsed });
+      const wakeLang = detectWakeLang(userText, langUsed);
+      const answer = forceSentenceEnd(wakeAnswer(wakeLang), wakeLang);
+      return res.json({ answer, answerLang: wakeLang });
     }
 
     // ✅ NEU: subjektive/in-character Fragen lockern (kein Wikidata-Zwang, keine Name/Jahr-Blockade)
