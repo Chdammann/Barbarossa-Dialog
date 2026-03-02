@@ -778,7 +778,7 @@ let _awaitingServer = false;
 
 const NO_SPEECH_MAX_RETRIES = 2;     // wie oft bei "no-speech" direkt neu starten
 const NO_SPEECH_RETRY_MS    = 900;   // Pause bevor neu gestartet wird
-const SILENCE_GRACE_MS      = 2200;  // erst nach echter Pause "stille erkannt" behandeln
+const SILENCE_GRACE_MS      = 4500;  // erst nach echter Pause "stille erkannt" behandeln
 
 function getSpeechRecognitionCtor() {
   return window.SpeechRecognition || window.webkitSpeechRecognition || null;
@@ -933,11 +933,11 @@ function ensureRecognition() {
       // Think-Phrase DE/EN (nur wenn es wirklich dauert)
       const thinkPhrase =
         (detectedLanguage === "en")
-          ? "One moment, please."
-          : "Ähm … dazu kann ich etwas sagen.";
+          ? "Uhm....."
+          : "Ähm ….";
 
       // ✅ NEU: Think erst später, und nur wenn Request wirklich noch offen ist
-      const THINK_DELAY_MS   = 1500;
+      const THINK_DELAY_MS   = 1800;
       const MIN_THINK_GAP_MS = 450;
 
       let thinkTimer = null;
