@@ -823,34 +823,36 @@ function ensureRecognition() {
       if (STATE !== "listen") return;
       if (endedSession !== _recSessionId) return;
 
+      // ===== 1) NICHTS GEHÖRT =====
       if (!heardSomething || !lastTranscript) {
 
-  // ✅ Wenn Dialog aktiv: einmal sanft neu zuhören (Pause zulassen)
-  try {
-    if (SESSION_ACTIVE) {
-      console.log("🕳️ Stille erkannt – höre weiter…");
-      STATE = "greet";
-      greeted = true;
+        // ✅ Wenn Dialog aktiv: einmal sanft neu zuhören (Pause zulassen)
+        try {
+          if (SESSION_ACTIVE) {
+            console.log("🕳️ Stille erkannt – höre weiter…");
+            STATE = "greet";
+            greeted = true;
 
-      // kleine Entkopplung, dann direkt wieder listen
-      setTimeout(() => {
-        if (talking || recRunning) return;
-        lastTranscript = "";
-        listeningFinished = false;
-        STATE = "listen";
-        startRecognition();
-      }, 250);
+            // kleine Entkopplung, dann direkt wieder listen
+            setTimeout(() => {
+              if (talking || recRunning) return;
+              lastTranscript = "";
+              listeningFinished = false;
+              STATE = "listen";
+              startRecognition();
+            }, 250);
 
-      return;
-    }
-  } catch (e) {}
+            return;
+          }
+        } catch (e) {}
 
-  // ohne Dialog: normales Verhalten
-  STATE = "greet";
-  showHint("Kurz Knopf drücken, dann fragen");
-  return;
-}
+        // ohne Dialog: normales Verhalten
+        STATE = "greet";
+        try { showHint("Kurz Knopf drücken, dann fragen"); } catch (e) {}
+        return;
+      }
 
+      // ===== 2) ETWAS GEHÖRT → THINK + FETCH =====
       STATE = "think";
       resetMovements();
 
@@ -859,57 +861,21 @@ function ensureRecognition() {
         hmStartTime = performance.now();
       });
 
-      // Think-Phrase DE/EN
+      // Think-Phrase DE/EN (wird NUR gesprochen, wenn es wirklich dauert)
       const thinkPhrase =
         (detectedLanguage === "en")
           ? "One moment, please."
           : "Ähm … dazu kann ich etwas sagen.";
 
-      speak(thinkPhrase, true, (detectedLanguage === "en") ? "en" : "de");
-
- // Server-Request (lang als Fallback mitsenden)
-      try { if (SESSION_ACTIVE) SESSION_LAST_TS = Date.now(); } catch (e) {}
-
-      fetch("/ask", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text: lastTranscript,
-          lang: detectedLanguage,
-          conversationId: (typeof CONV_ID !== "undefined" && CONV_ID) ? CONV_ID : null
-        })
-      })
-      .then(r => r.json())
-      .then(data => {
-
-  const waitForThinkEnd = setInterval(() => {
-    if (!talking) {
-      clearInterval(waitForThinkEnd);
-
-      STATE = "think";
-      resetMovements();
-
-      requestAnimationFrame(() => {
-        hmNeigen = true;
-        hmStartTime = performance.now();
-      });
-
-      // Think-Phrase DE/EN
-      const thinkPhrase =
-        (detectedLanguage === "en")
-          ? "One moment, please."
-          : "Ähm … einen Moment bitte.";
-
-      // ✅ Think-Phrase nur, wenn es wirklich dauert
-      const THINK_DELAY_MS = 800;          // ab wann überhaupt sprechen
-      const MIN_THINK_GAP_MS = 450;        // nach Think nicht sofort abwürgen (optional)
+      const THINK_DELAY_MS   = 800; // erst dann Think sprechen
+      const MIN_THINK_GAP_MS = 450; // wenn Think gesprochen, nicht sofort hart umschalten
 
       let thinkTimer = null;
       let thinkStartedAt = 0;
       let thinkWasSpoken = false;
 
+      // Timer starten: spricht nur, wenn wir nach THINK_DELAY_MS immer noch warten
       thinkTimer = setTimeout(() => {
-        // nur wenn wir noch wirklich "denken" und noch nichts anderes läuft
         if (STATE !== "think") return;
         if (talking) return;
 
@@ -935,69 +901,70 @@ function ensureRecognition() {
           conversationId: (typeof CONV_ID !== "undefined" && CONV_ID) ? CONV_ID : null
         })
       })
-      .then(r => r.json())
-      .then(data => {
+        .then(r => r.json())
+        .then(data => {
 
-        // ✅ Wenn Antwort schnell da: Think-Timer stoppen, es wurde nichts gesagt
-        if (thinkTimer) {
-          clearTimeout(thinkTimer);
-          thinkTimer = null;
-        }
+          // Think-Timer stoppen (falls noch nicht gesprochen)
+          if (thinkTimer) {
+            clearTimeout(thinkTimer);
+            thinkTimer = null;
+          }
 
-        // optional: wenn Think bereits gesprochen wurde, minimalen Abstand geben
-        const extraDelay =
-          (thinkWasSpoken && thinkStartedAt)
-            ? Math.max(0, MIN_THINK_GAP_MS - (Date.now() - thinkStartedAt))
-            : 0;
+          // optionaler Mini-Abstand, wenn Think wirklich gesprochen wurde
+          const extraDelay =
+            (thinkWasSpoken && thinkStartedAt)
+              ? Math.max(0, MIN_THINK_GAP_MS - (Date.now() - thinkStartedAt))
+              : 0;
 
-        setTimeout(() => {
-          const waitForThinkEnd = setInterval(() => {
-            if (!talking) {
-              clearInterval(waitForThinkEnd);
+          const proceed = () => {
+            const waitForThinkEnd = setInterval(() => {
+              if (!talking) {
+                clearInterval(waitForThinkEnd);
 
-              STATE = "answer";
-              resetMovements();
+                STATE = "answer";
+                resetMovements();
 
-              rising = true;
-              riseStartTime = performance.now();
+                rising = true;
+                riseStartTime = performance.now();
 
-              // Sprache aus Serverantwort übernehmen
-              let answerLang = "de";
-              if (data && (data.answerLang === "en" || data.answerLang === "de")) {
-                answerLang = data.answerLang;
+                // Sprache aus Serverantwort übernehmen
+                let answerLang = "de";
+                if (data && (data.answerLang === "en" || data.answerLang === "de")) {
+                  answerLang = data.answerLang;
+                }
+
+                // Engine-Hilfe aktualisieren (stabilisiert Folgeerkennung)
+                detectedLanguage = answerLang;
+
+                speak(data.answer, false, answerLang);
               }
+            }, 120);
+          };
 
-              // Engine-Hilfe aktualisieren (stabilisiert Folgeerkennung)
-              detectedLanguage = answerLang;
+          if (extraDelay > 0) setTimeout(proceed, extraDelay);
+          else proceed();
+        })
+        .catch(() => {
 
-              speak(data.answer, false, answerLang);
-            }
-          }, 120);
-        }, extraDelay);
+          if (thinkTimer) {
+            clearTimeout(thinkTimer);
+            thinkTimer = null;
+          }
 
-      })
-      .catch(() => {
+          STATE = "answer";
+          resetMovements();
 
-        if (thinkTimer) {
-          clearTimeout(thinkTimer);
-          thinkTimer = null;
-        }
-
-        STATE = "answer";
-        resetMovements();
-
-        speak(
-          "Verzeiht, ich habe Euch nicht recht verstanden.",
-          false,
-          "de"
-        );
-      });
+          speak(
+            "Verzeiht, ich habe Euch nicht recht verstanden.",
+            false,
+            "de"
+          );
+        });
     };
   }
 
   return recognition;
 }
-
 /* -----------------------------
    RECOGNITION STARTEN (MUSEUM-STABIL + DIALOG)
    Default: de-DE
