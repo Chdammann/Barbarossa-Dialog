@@ -327,10 +327,20 @@ app.post("/ask", async (req, res) => {
     // ✅ NEU: subjektive/in-character Fragen lockern (kein Wikidata-Zwang, keine Name/Jahr-Blockade)
     const subjective = isSubjectiveInCharacterQuestion(userText, langUsed);
 
-    const tLower = userText.toLowerCase();
-    const mentionsAfd =
-      tLower.includes("afd") || tLower.includes("alternative für deutschland");
+    const tLower = String(userText || "").toLowerCase();
 
+// Umlaut-Varianten robust machen (für "fuer")
+const tUml = tLower
+  .replace(/ä/g, "ae")
+  .replace(/ö/g, "oe")
+  .replace(/ü/g, "ue")
+  .replace(/ß/g, "ss");
+
+// "AfD" auch als "A f D", "A-F-D", "A. F. D." etc. erkennen
+const mentionsAfd =
+  /\ba\W*f\W*d\b/i.test(tLower) ||
+  tLower.includes("alternative für deutschland") ||
+  tUml.includes("alternative fuer deutschland");
     if (mentionsAfd) {
       const answer =
         langUsed === "en"
@@ -400,3 +410,4 @@ app.use((req, res) => {
 app.listen(PORT, () => {
   console.log(`✅ Server läuft auf Port ${PORT}`);
 });
+
