@@ -824,10 +824,32 @@ function ensureRecognition() {
       if (endedSession !== _recSessionId) return;
 
       if (!heardSomething || !lastTranscript) {
-        STATE = "greet";
-        showHint("Kurz Knopf drücken, dann fragen");
-        return;
-      }
+
+  // ✅ Wenn Dialog aktiv: einmal sanft neu zuhören (Pause zulassen)
+  try {
+    if (SESSION_ACTIVE) {
+      console.log("🕳️ Stille erkannt – höre weiter…");
+      STATE = "greet";
+      greeted = true;
+
+      // kleine Entkopplung, dann direkt wieder listen
+      setTimeout(() => {
+        if (talking || recRunning) return;
+        lastTranscript = "";
+        listeningFinished = false;
+        STATE = "listen";
+        startRecognition();
+      }, 250);
+
+      return;
+    }
+  } catch (e) {}
+
+  // ohne Dialog: normales Verhalten
+  STATE = "greet";
+  showHint("Kurz Knopf drücken, dann fragen");
+  return;
+}
 
       STATE = "think";
       resetMovements();
@@ -841,7 +863,7 @@ function ensureRecognition() {
       const thinkPhrase =
         (detectedLanguage === "en")
           ? "One moment, please."
-          : "Ähm … einen Moment bitte.";
+          : "Ähm … dazu kann ich etwas sagen.";
 
       speak(thinkPhrase, true, (detectedLanguage === "en") ? "en" : "de");
 
@@ -860,30 +882,49 @@ function ensureRecognition() {
       .then(r => r.json())
       .then(data => {
 
-        const waitForThinkEnd = setInterval(() => {
-          if (!talking) {
-            clearInterval(waitForThinkEnd);
+  const waitForThinkEnd = setInterval(() => {
+    if (!talking) {
+      clearInterval(waitForThinkEnd);
 
-            STATE = "answer";
-            resetMovements();
+      STATE = "answer";
+      resetMovements();
 
-            rising = true;
-            riseStartTime = performance.now();
+      rising = true;
+      riseStartTime = performance.now();
 
-            // Sprache aus Serverantwort übernehmen
-            let answerLang = "de";
-            if (data && (data.answerLang === "en" || data.answerLang === "de")) {
-              answerLang = data.answerLang;
-            }
+      // Sprache aus Serverantwort übernehmen
+      let answerLang = "de";
+      if (data && (data.answerLang === "en" || data.answerLang === "de")) {
+        answerLang = data.answerLang;
+      }
 
-            // Engine-Hilfe aktualisieren (stabilisiert Folgeerkennung)
-            detectedLanguage = answerLang;
+      // ✅ NEU: Server kann Session-Ende signalisieren
+      const endedByServer = !!(data && data.ended === true);
 
-            speak(data.answer, false, answerLang);
-          }
-        }, 120);
+      if (endedByServer) {
+        // Session hart beenden (damit kein Auto-Listen mehr triggert)
+        try { SESSION_ACTIVE = false; } catch (e) {}
+        try { CONV_ID = null; } catch (e) {}
 
-      })
+        // optionaler Marker, falls du ihn in speak() prüfen willst
+        try { window._SESSION_ENDED = true; } catch (e) {}
+
+        // UI zurücksetzen
+        try { if (typeof hideHint === "function") hideHint(); } catch (e) {}
+        greeted = false;
+      } else {
+        // Session läuft weiter
+        try { window._SESSION_ENDED = false; } catch (e) {}
+
+        // Engine-Hilfe aktualisieren (stabilisiert Folgeerkennung)
+        detectedLanguage = answerLang;
+      }
+
+      speak(data.answer, false, answerLang);
+    }
+  }, 120);
+
+})
       .catch(() => {
         STATE = "answer";
         resetMovements();
@@ -1499,8 +1540,17 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
   hmNeigen = false;
   rising = false;
 
-  // ✅ DIALOG: nach Antwort in greet bleiben (Session aktiv), aber direkt wieder zuhören
-  if (typeof SESSION_ACTIVE !== "undefined" && SESSION_ACTIVE) {
+  const endedNow = !!(window._SESSION_ENDED === true);
+
+  // ✅ Wenn Server das Gespräch beendet hat: NICHT auto-listen, zurück in idle
+  if (endedNow) {
+    try { window._SESSION_ENDED = false; } catch (e) {}
+    greeted = false;
+    STATE = "idle";
+    try { if (typeof hideHint === "function") hideHint(); } catch (e) {}
+  }
+  // ✅ DIALOG: nach Antwort in greet bleiben (Session aktiv), dann automatisch weiter zuhören
+  else if (typeof SESSION_ACTIVE !== "undefined" && SESSION_ACTIVE) {
     STATE = "greet";
     greeted = true;
 
