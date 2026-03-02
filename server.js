@@ -65,6 +65,43 @@ function forceSentenceEnd(text, lang) {
   return t + ".";
 }
 
+// ✅ Sonderregel: "Aufwecken"-Fragen (DE/EN) -> feste Antwort ohne OpenAI-Call
+function isWakeQuestion(text, lang) {
+  const t0 = String(text || "").trim();
+  if (!t0) return false;
+
+  const t = t0
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s-]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!t) return false;
+
+  if (lang === "de") {
+    return (
+      t.includes("wer hat dich aufgeweckt") ||
+      t.includes("wie bist du aufgewacht") ||
+      t.includes("warum bist du aufgewacht")
+    );
+  }
+
+  // EN (robust, nicht nur exakte Wortfolge)
+  return (
+    (/\bwho\b/.test(t) && (/\bwoke\b/.test(t) || /\bwoken\b/.test(t)) && /\byou\b/.test(t)) ||
+    (/\bhow\b/.test(t) && (t.includes("wake up") || t.includes("woke up"))) ||
+    (/\bwhy\b/.test(t) && (t.includes("wake up") || t.includes("woke up")))
+  );
+}
+
+function wakeAnswer(lang) {
+  if (lang === "en") {
+    return "Christoph Dammann woke me up—thank you. I awoke because you pressed the button and called me from my long slumber. And why? Because I am glad to work here now as an avatar in the city museum, ready for your questions. Ask on, and I shall answer.";
+  }
+
+  return "Mich hat Christoph Dammann aufgeweckt – ich danke dafür. Ich bin aufgewacht, weil Ihr den Knopf gedrückt und mich aus langem Schlummer gerufen habt. Und warum? Weil ich nun gern als Avatar im Stadtmuseum arbeite und für Eure Fragen bereit bin. Fragt nur, ich will antworten.";
+}
+
 // ✅ ROBUST: Sprache primär über Satzanfang bestimmen (Fragewörter + Imperativ-Starter)
 function detectLanguageServer(text) {
   const t0 = String(text || "").trim();
@@ -279,6 +316,12 @@ app.post("/ask", async (req, res) => {
             : "Ich habe Euch nicht deutlich vernommen. Bitte fragt erneut.",
         answerLang: langUsed,
       });
+    }
+
+    // ✅ Sonderregel: Aufwecken-Fragen -> feste Antwort, kein OpenAI-Call
+    if (isWakeQuestion(userText, langUsed)) {
+      const answer = forceSentenceEnd(wakeAnswer(langUsed), langUsed);
+      return res.json({ answer, answerLang: langUsed });
     }
 
     // ✅ NEU: subjektive/in-character Fragen lockern (kein Wikidata-Zwang, keine Name/Jahr-Blockade)
