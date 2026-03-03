@@ -331,7 +331,7 @@ function endConversationAnswer(lang) {
 }
 
 /* ===============================
-   WIKIDATA (MINIMAL) – Label + Beschreibung
+   WIKIDATA (MINIMAL) – Label + Beschreibung (+ Wikipedia Link + Extract + Claims)
 ================================ */
 
 const WD_CACHE = new Map();
@@ -382,30 +382,282 @@ function toEntityQuery(userText, lang) {
   if (!t) return "";
 
   const stopDe = new Set([
-    "wer","wen","wem","wessen","was","wie","wo","wohin","woher","wann","warum","wieso","weshalb",
-    "ist","sind","war","waren","sei","seid","bin","bist",
-    "ich","du","ihr","wir","sie","er","es",
-    "mein","dein","euer","unser",
-    "bitte","danke",
-    "erkläre","erzähle","beschreibe","zeige","sage","sprich","nenn","nenne",
-    "der","die","das","ein","eine","einen","einem","einer","und","oder","aber","zu","zum","zur",
-    "im","in","am","an","auf","mit","ohne","von","für","über","nach","vor"
+    "wer",
+    "wen",
+    "wem",
+    "wessen",
+    "was",
+    "wie",
+    "wo",
+    "wohin",
+    "woher",
+    "wann",
+    "warum",
+    "wieso",
+    "weshalb",
+    "ist",
+    "sind",
+    "war",
+    "waren",
+    "sei",
+    "seid",
+    "bin",
+    "bist",
+    "ich",
+    "du",
+    "ihr",
+    "wir",
+    "sie",
+    "er",
+    "es",
+    "mein",
+    "dein",
+    "euer",
+    "unser",
+    "bitte",
+    "danke",
+    "erkläre",
+    "erzähle",
+    "beschreibe",
+    "zeige",
+    "sage",
+    "sprich",
+    "nenn",
+    "nenne",
+    "der",
+    "die",
+    "das",
+    "ein",
+    "eine",
+    "einen",
+    "einem",
+    "einer",
+    "und",
+    "oder",
+    "aber",
+    "zu",
+    "zum",
+    "zur",
+    "im",
+    "in",
+    "am",
+    "an",
+    "auf",
+    "mit",
+    "ohne",
+    "von",
+    "für",
+    "über",
+    "nach",
+    "vor",
   ]);
 
   const stopEn = new Set([
-    "what","why","where","when","who","whom","whose","which","how",
-    "is","are","was","were","be","been",
-    "i","you","we","they","he","she","it",
-    "my","your","our","their",
-    "please","thanks","thank",
-    "tell","explain","describe","show","say","speak","name",
-    "the","a","an","and","or","but","to","in","on","at","with","without","from","about","after","before"
+    "what",
+    "why",
+    "where",
+    "when",
+    "who",
+    "whom",
+    "whose",
+    "which",
+    "how",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "i",
+    "you",
+    "we",
+    "they",
+    "he",
+    "she",
+    "it",
+    "my",
+    "your",
+    "our",
+    "their",
+    "please",
+    "thanks",
+    "thank",
+    "tell",
+    "explain",
+    "describe",
+    "show",
+    "say",
+    "speak",
+    "name",
+    "the",
+    "a",
+    "an",
+    "and",
+    "or",
+    "but",
+    "to",
+    "in",
+    "on",
+    "at",
+    "with",
+    "without",
+    "from",
+    "about",
+    "after",
+    "before",
   ]);
 
   const stop = lang === "en" ? stopEn : stopDe;
 
   const words = t.split(" ").filter((w) => w && !stop.has(w));
   return words.slice(0, 6).join(" ").slice(0, 80);
+}
+
+function trimExtract(txt, maxChars = 420) {
+  const t = String(txt || "").replace(/\s+/g, " ").trim();
+  if (!t) return "";
+  if (t.length <= maxChars) return t;
+  return t.slice(0, maxChars).replace(/\s+\S*$/, "").trim() + " …";
+}
+
+function prettyYearFromWikidataTime(timeStr) {
+  const t = String(timeStr || "").trim();
+  if (!t) return "";
+  // Examples: "+1870-00-00T00:00:00Z", "-0044-00-00T00:00:00Z"
+  const m = t.match(/^([+-])(\d{1,})(?:-)/);
+  if (!m) return "";
+  const sign = m[1];
+  const yearRaw = m[2];
+  const yearNum = parseInt(yearRaw, 10);
+  if (!Number.isFinite(yearNum)) return "";
+  return sign === "-" ? `-${yearNum}` : `${yearNum}`;
+}
+
+async function getWikipediaSummary(title, lang) {
+  const t0 = String(title || "").trim();
+  if (!t0) return null;
+
+  const cacheKey = `wpsummary:${lang}:${t0.toLowerCase()}`;
+  const cached = wdCacheGet(cacheKey);
+  if (cached !== null) return cached;
+
+  const wpHost = lang === "en" ? "en.wikipedia.org" : "de.wikipedia.org";
+  const encTitle = encodeURIComponent(t0.replace(/ /g, "_"));
+  const url = `https://${wpHost}/api/rest_v1/page/summary/${encTitle}`;
+
+  try {
+    const rr = await fetchWithTimeout(url, WD_TIMEOUT_MS);
+    if (!rr.ok) throw new Error(`wp summary http ${rr.status}`);
+    const data = await rr.json();
+
+    if (
+      data?.type &&
+      String(data.type).toLowerCase().includes("disambiguation")
+    ) {
+      wdCacheSet(cacheKey, null);
+      return null;
+    }
+
+    const extract = trimExtract(data?.extract || "", 420);
+    const pageUrl =
+      data?.content_urls?.desktop?.page || `https://${wpHost}/wiki/${encTitle}`;
+
+    const result = {
+      title: data?.title || t0,
+      extract,
+      url: pageUrl,
+    };
+
+    wdCacheSet(cacheKey, result);
+    return result;
+  } catch (e) {
+    wdCacheSet(cacheKey, null);
+    return null;
+  }
+}
+
+function wdGetFirstSnakValue(entity, pid) {
+  const claims = entity?.claims?.[pid];
+  if (!Array.isArray(claims) || !claims.length) return null;
+
+  const preferred = claims.find((c) => c?.rank === "preferred") || claims[0];
+  const snak = preferred?.mainsnak;
+  if (!snak || snak.snaktype !== "value") return null;
+
+  return snak.datavalue?.value ?? null;
+}
+
+function wdEntityIdFromValue(v) {
+  const id = v?.id;
+  if (typeof id === "string" && id) return id;
+  return null;
+}
+
+function wdCoordFromValue(v) {
+  if (!v) return null;
+  const lat = typeof v.latitude === "number" ? v.latitude : null;
+  const lon = typeof v.longitude === "number" ? v.longitude : null;
+  if (lat === null || lon === null) return null;
+  return { lat, lon };
+}
+
+function wdStringFromValue(v) {
+  if (typeof v === "string" && v.trim()) return v.trim();
+  return null;
+}
+
+function wdTimeFromValue(v) {
+  const t = v?.time;
+  if (typeof t !== "string" || !t) return null;
+  return t;
+}
+
+async function wdGetLabelsBatch(qids, lang) {
+  const ids = Array.from(
+    new Set(
+      (qids || []).filter((x) => typeof x === "string" && /^Q\d+$/.test(x))
+    )
+  );
+  if (!ids.length) return {};
+
+  const toFetch = [];
+  const out = {};
+
+  for (const qid of ids) {
+    const cacheKey = `wdlabel:${lang}:${qid}`;
+    const cached = wdCacheGet(cacheKey);
+    if (cached !== null) {
+      out[qid] = cached;
+    } else {
+      toFetch.push(qid);
+    }
+  }
+
+  if (!toFetch.length) return out;
+
+  const url =
+    `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${encodeURIComponent(
+      toFetch.join("|")
+    )}` +
+    `&props=labels&languages=${encodeURIComponent(lang)}&format=json&origin=*`;
+
+  try {
+    const rr = await fetchWithTimeout(url, WD_TIMEOUT_MS);
+    if (!rr.ok) throw new Error(`wd labels http ${rr.status}`);
+    const data = await rr.json();
+
+    for (const qid of toFetch) {
+      const e = data?.entities?.[qid];
+      const label = e?.labels?.[lang]?.value || qid;
+      out[qid] = label;
+      wdCacheSet(`wdlabel:${lang}:${qid}`, label);
+    }
+
+    return out;
+  } catch (e) {
+    for (const qid of toFetch) wdCacheSet(`wdlabel:${lang}:${qid}`, null);
+    return out;
+  }
 }
 
 async function getWikidataContext(userText, lang) {
@@ -419,7 +671,9 @@ async function getWikidataContext(userText, lang) {
   if (cached !== null) return cached;
 
   const searchUrl =
-    `https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(q)}` +
+    `https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(
+      q
+    )}` +
     `&language=${encodeURIComponent(lang)}&uselang=${encodeURIComponent(lang)}` +
     `&format=json&limit=1&origin=*`;
 
@@ -441,8 +695,12 @@ async function getWikidataContext(userText, lang) {
   }
 
   const entUrl =
-    `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${encodeURIComponent(qid)}` +
-    `&props=labels|descriptions&languages=${encodeURIComponent(lang)}&format=json&origin=*`;
+    `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${encodeURIComponent(
+      qid
+    )}` +
+    `&props=labels|descriptions|sitelinks|claims&languages=${encodeURIComponent(
+      lang
+    )}&format=json&origin=*`;
 
   try {
     const rr = await fetchWithTimeout(entUrl, WD_TIMEOUT_MS);
@@ -458,11 +716,52 @@ async function getWikidataContext(userText, lang) {
     const label = entity?.labels?.[lang]?.value || qid;
     const description = entity?.descriptions?.[lang]?.value || "";
 
+    // Wikipedia sitelink + Extract
+    const siteKey = lang === "en" ? "enwiki" : "dewiki";
+    const wikiTitle = entity?.sitelinks?.[siteKey]?.title || "";
+    const wp = wikiTitle ? await getWikipediaSummary(wikiTitle, lang) : null;
+
+    // Claims we want
+    const p31v = wdGetFirstSnakValue(entity, "P31");
+    const p131v = wdGetFirstSnakValue(entity, "P131");
+    const p625v = wdGetFirstSnakValue(entity, "P625");
+    const p856v = wdGetFirstSnakValue(entity, "P856");
+    const p571v = wdGetFirstSnakValue(entity, "P571");
+
+    const p31Q = wdEntityIdFromValue(p31v);
+    const p131Q = wdEntityIdFromValue(p131v);
+    const coord = wdCoordFromValue(p625v);
+    const website = wdStringFromValue(p856v);
+    const inceptionTime = wdTimeFromValue(p571v);
+    const inceptionYear = inceptionTime
+      ? prettyYearFromWikidataTime(inceptionTime)
+      : "";
+
+    const labelsMap = await wdGetLabelsBatch([p31Q, p131Q], lang);
+
     const result = {
       qid,
       label,
       description,
       url: `https://www.wikidata.org/wiki/${qid}`,
+
+      wikiTitle: wp?.title || (wikiTitle || ""),
+      wikiUrl:
+        wp?.url ||
+        (wikiTitle
+          ? `https://${lang === "en" ? "en" : "de"}.wikipedia.org/wiki/${encodeURIComponent(
+              wikiTitle.replace(/ /g, "_")
+            )}`
+          : ""),
+      wikiExtract: wp?.extract || "",
+
+      claims: {
+        P31: p31Q ? { qid: p31Q, label: labelsMap[p31Q] || p31Q } : null,
+        P131: p131Q ? { qid: p131Q, label: labelsMap[p131Q] || p131Q } : null,
+        P625: coord,
+        P856: website || null,
+        P571: inceptionYear || null,
+      },
     };
 
     wdCacheSet(cacheKey, result);
@@ -580,7 +879,21 @@ app.post("/ask", async (req, res) => {
     const wdBlock = wd
       ? `Wikidata (${langUsed.toUpperCase()}): ${wd.label} (${wd.qid})
 Beschreibung: ${wd.description || "—"}
-Quelle: ${wd.url}`
+P31 (instance of): ${
+          wd.claims?.P31 ? `${wd.claims.P31.label} (${wd.claims.P31.qid})` : "—"
+        }
+P131 (located in): ${
+          wd.claims?.P131 ? `${wd.claims.P131.label} (${wd.claims.P131.qid})` : "—"
+        }
+P625 (coordinates): ${
+          wd.claims?.P625 ? `${wd.claims.P625.lat}, ${wd.claims.P625.lon}` : "—"
+        }
+P856 (official website): ${wd.claims?.P856 || "—"}
+P571 (inception year): ${wd.claims?.P571 || "—"}
+Quelle: ${wd.url}
+Wikipedia (${langUsed.toUpperCase()}): ${wd.wikiTitle || "—"}
+Extract: ${wd.wikiExtract || "—"}
+Quelle: ${wd.wikiUrl || "—"}`
       : `Wikidata (${langUsed.toUpperCase()}): Kein Treffer oder Timeout.`;
 
     const systemPrompt =
@@ -645,5 +958,3 @@ app.use((req, res) => {
 app.listen(PORT, () => {
   console.log(`✅ Server läuft auf Port ${PORT}`);
 });
-
-
