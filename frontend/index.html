@@ -756,7 +756,7 @@ function autoListenNextTurn(reason = "") {
 }
 /* -----------------------------
    STATE MACHINE – RECOGNITION
-   MIT THINK-PHASE (WAKE-SICHER) – FIXED v4.2
+   MIT THINK-PHASE (WAKE-SICHER) – FIXED v4.2.1
    (SERVER DECIDES LANGUAGE, CLIENT SENDS lang AS FALLBACK)
    + ✅ Gespräch beenden: Stop Listening + Reset auf Startzustand
 ----------------------------- */
@@ -800,37 +800,36 @@ function isEndConversationIntent(text) {
   const t = _normalizeTextForEndIntent(text);
   if (!t) return false;
 
+  // ✅ STRIKT: nur wenn wirklich "Gespräch ... beendet/zu ende/over/ended" vorkommt
   // Deutsch
-  if (
-    t.includes("das gespräch ist beendet") ||
-    t.includes("gespräch ist beendet") ||
-    t.includes("gespraech ist beendet") ||
-    t.includes("danke das gespräch ist beendet") ||
-    t.includes("danke das gespraech ist beendet") ||
-    t === "danke" ||
-    t === "vielen dank" ||
-    t === "tschüss" ||
-    t === "tschuess" ||
-    t === "auf wiedersehen"
-  ) return true;
+  const de =
+    (t.includes("gespräch") || t.includes("gespraech")) &&
+    (
+      t.includes("ist beendet") ||
+      t.includes("beendet") ||
+      t.includes("zu ende") ||
+      t.includes("vorbei")
+    );
 
   // Englisch
-  if (
-    t.includes("the conversation is over") ||
-    t.includes("conversation is over") ||
-    t.includes("the conversation is ended") ||
-    t.includes("thank you the conversation is over") ||
-    t === "thank you" ||
-    t === "thanks" ||
-    t === "goodbye" ||
-    t === "bye"
-  ) return true;
+  const en =
+    (t.includes("conversation") || t.includes("talk") || t.includes("chat")) &&
+    (
+      t.includes("is over") ||
+      t.includes("over") ||
+      t.includes("ended") ||
+      t.includes("finished") ||
+      t.includes("is finished")
+    );
 
-  return false;
+  return !!(de || en);
 }
 
 function endConversation(reason = "user", langHint = "de") {
   try { console.log("🛑 Gespräch beendet:", reason); } catch (e) {}
+
+  // ✅ Session/Listen hart invalidieren (alte onend Events “verpuffen”)
+  _recSessionId++;
 
   // --- Session beenden ---
   try { SESSION_ACTIVE = false; } catch (e) {}
@@ -871,18 +870,18 @@ function endConversation(reason = "user", langHint = "de") {
   // --- UI ---
   try { hideHint(); } catch (e) {}
 
-  // --- Optionaler Abschlusssatz (spricht NACH Reset; kein neues Listening!) ---
-  const finalDe = 'Verehrter Bürger der Neuzeit, ich danke für unseren anregenden Austausch.';
-  const finalEn = 'Honoured citizen of this modern age, I thank thee for our stirring exchange.';
+  // --- Abschlusssatz ---
+  const finalDe = "Verehrter Bürger der Neuzeit, ich danke für unseren anregenden Austausch.";
+  const finalEn = "Honoured citizen of this modern age, I thank thee for our stirring exchange.";
 
   const finalText = (langHint === "en") ? finalEn : finalDe;
 
-  // Wenn gerade gesprochen wird, nicht reinfunken – aber in deinem Flow ist es meist ruhig.
+  // Wenn gerade gesprochen wird, nicht reinfunken
   try {
     if (!talking) {
       speak(finalText, false, (langHint === "en") ? "en" : "de", () => {
-        // nach Abschluss: zurück im Startzustand bleiben (idle)
         try { hideHint(); } catch (e) {}
+        STATE = "idle";
       });
     }
   } catch (e) {}
@@ -929,9 +928,8 @@ function ensureRecognition() {
       heardSomething = true;
       _noSpeechCount = 0;
 
-      // ✅ NEU: Gespräch-Ende sofort abfangen (bevor onend/fetch)
+      // ✅ Gespräch-Ende sofort abfangen (bevor onend/fetch)
       if (isEndConversationIntent(res)) {
-        // Sobald wir das Ende erkennen: abbrechen + Abschluss
         endConversation("intent-detected", detectedLanguage);
         return;
       }
@@ -947,9 +945,7 @@ function ensureRecognition() {
         _noSpeechCount++;
 
         const sinceArm = performance.now() - (_listenArmedAt || 0);
-        if (sinceArm < SILENCE_GRACE_MS) {
-          return;
-        }
+        if (sinceArm < SILENCE_GRACE_MS) return;
 
         if (_noSpeechCount <= NO_SPEECH_MAX_RETRIES) {
           _recAbortByUs = true;
@@ -1030,7 +1026,7 @@ function ensureRecognition() {
         return;
       }
 
-      // ✅ NEU: Falls End-Intent erst hier greifen würde (Sicherheitsnetz)
+      // ✅ Sicherheitsnetz: Ende-Intent auch hier
       if (isEndConversationIntent(lastTranscript)) {
         endConversation("intent-onend", detectedLanguage);
         return;
@@ -1045,7 +1041,6 @@ function ensureRecognition() {
         hmStartTime = performance.now();
       });
 
-      // Think-Phrase DE/EN (nur wenn es wirklich dauert)
       const thinkPhrase =
         (detectedLanguage === "en")
           ? "One moment, please."
@@ -1112,9 +1107,7 @@ function ensureRecognition() {
                   answerLang = data.answerLang;
                 }
 
-                // Engine-Hilfe aktualisieren
                 detectedLanguage = answerLang;
-
                 speak(data.answer, false, answerLang);
               }
             }, 120);
@@ -1154,7 +1147,6 @@ function startRecognition() {
     return;
   }
 
-  // Engine-Hilfe: Sprache setzen
   r.lang = (detectedLanguage === "en") ? "en-US" : "de-DE";
   _recSessionId++;
 
