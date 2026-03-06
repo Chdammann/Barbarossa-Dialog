@@ -756,10 +756,10 @@ function autoListenNextTurn(reason = "") {
 }
 /* -----------------------------
    STATE MACHINE – RECOGNITION
-   MIT THINK-PHASE (WAKE-SICHER) – FIXED v4.2.2
+   MIT THINK-PHASE (WAKE-SICHER) – FIXED v4.3
    (SERVER DECIDES LANGUAGE, CLIENT SENDS lang AS FALLBACK)
    + ✅ Gespräch beenden: Stop Listening + Reset auf Startzustand
-   + ✅ robustere Guards gegen Runtime-Fehler
+   + ✅ kein Hängenbleiben nach Aufnahme
 ----------------------------- */
 
 let recognition = null;
@@ -773,25 +773,23 @@ let _recHandlersBound = false;
 let _recSessionId = 0;
 let _recAbortByUs = false;
 
-// ✅ Stabilitäts-Guards gegen Endlos-"no-speech"
+// Stabilitäts-Guards
 let _noSpeechCount = 0;
 let _listenArmedAt = 0;
 let _awaitingServer = false;
 
-const NO_SPEECH_MAX_RETRIES = 2;     // wie oft bei "no-speech" direkt neu starten
-const NO_SPEECH_RETRY_MS    = 900;   // Pause bevor neu gestartet wird
-const SILENCE_GRACE_MS      = 4500;  // erst nach echter Pause "stille erkannt" behandeln
+const NO_SPEECH_MAX_RETRIES = 2;
+const NO_SPEECH_RETRY_MS    = 900;
+const SILENCE_GRACE_MS      = 4500;
 
 /* ===============================
    Kleine Safe-Helper
 ================================ */
-function _safeSetGlobal(name, value) {
-  try {
-    globalThis[name] = value;
-  } catch (e) {}
+function _safeSet(name, value) {
+  try { globalThis[name] = value; } catch (e) {}
 }
 
-function _safeGetGlobal(name, fallback = undefined) {
+function _safeGet(name, fallback = undefined) {
   try {
     return (typeof globalThis[name] !== "undefined") ? globalThis[name] : fallback;
   } catch (e) {
@@ -800,8 +798,7 @@ function _safeGetGlobal(name, fallback = undefined) {
 }
 
 /* ===============================
-   ✅ Gespräch beenden (Client-seitig, absolut)
-   -> stoppt Aufnahme, beendet Session, Pose zurück, optional Abschlusssatz
+   Gespräch beenden
 ================================ */
 function _normalizeTextForEndIntent(s) {
   return String(s || "")
@@ -817,7 +814,6 @@ function isEndConversationIntent(text) {
   const t = _normalizeTextForEndIntent(text);
   if (!t) return false;
 
-  // ✅ STRIKT: nur wenn wirklich "Gespräch ... beendet/zu ende/over/ended" vorkommt
   const de =
     (t.includes("gespräch") || t.includes("gespraech")) &&
     (
@@ -843,39 +839,32 @@ function isEndConversationIntent(text) {
 function endConversation(reason = "user", langHint = "de") {
   try { console.log("🛑 Gespräch beendet:", reason); } catch (e) {}
 
-  // ✅ Session/Listen hart invalidieren
   _recSessionId++;
-
-  // --- Session beenden ---
-  _safeSetGlobal("SESSION_ACTIVE", false);
-  _safeSetGlobal("CONV_ID", null);
-  _safeSetGlobal("SESSION_LAST_TS", Date.now());
-
-  // --- alle Listen/Retry-Guards hart zurücksetzen ---
   _awaitingServer = false;
   _noSpeechCount = 0;
   _listenArmedAt = 0;
   heardSomething = false;
 
-  _safeSetGlobal("lastTranscript", "");
-  _safeSetGlobal("listeningFinished", false);
+  _safeSet("SESSION_ACTIVE", false);
+  _safeSet("CONV_ID", null);
+  _safeSet("SESSION_LAST_TS", Date.now());
 
-  // --- Recognition hart beenden ---
+  _safeSet("lastTranscript", "");
+  _safeSet("listeningFinished", false);
+
   try {
     _recAbortByUs = true;
     if (recognition) recognition.abort();
   } catch (e) {}
-  _safeSetGlobal("recRunning", false);
 
-  // --- State zurück wie VOR Begrüßung ---
-  _safeSetGlobal("greeted", false);
-  _safeSetGlobal("STATE", "idle");
+  _safeSet("recRunning", false);
+  _safeSet("greeted", false);
+  _safeSet("STATE", "idle");
 
-  // --- Bewegungen / Pose sauber zurück ---
   try { resetMovements(); } catch (e) {}
   try {
-    _safeSetGlobal("hmNeigen", false);
-    _safeSetGlobal("rising", false);
+    hmNeigen = false;
+    rising = false;
   } catch (e) {}
 
   try {
@@ -886,19 +875,17 @@ function endConversation(reason = "user", langHint = "de") {
     }
   } catch (e) {}
 
-  // --- UI ---
   try { hideHint(); } catch (e) {}
 
-  // --- Abschlusssatz ---
   const finalDe = "Verehrter Bürger der Neuzeit, ich danke für unseren anregenden Austausch.";
   const finalEn = "Honoured citizen of this modern age, I thank thee for our stirring exchange.";
   const finalText = (langHint === "en") ? finalEn : finalDe;
 
   try {
-    if (!_safeGetGlobal("talking", false)) {
+    if (!_safeGet("talking", false)) {
       speak(finalText, false, (langHint === "en") ? "en" : "de", () => {
         try { hideHint(); } catch (e) {}
-        _safeSetGlobal("STATE", "idle");
+        _safeSet("STATE", "idle");
       });
     }
   } catch (e) {}
@@ -912,7 +899,7 @@ function getSpeechRecognitionCtor() {
 }
 
 /* -----------------------------
-   Recognition robust bereitstellen (lazy init)
+   Recognition robust bereitstellen
 ----------------------------- */
 function ensureRecognition() {
   const SR = getSpeechRecognitionCtor();
@@ -930,24 +917,27 @@ function ensureRecognition() {
     _recHandlersBound = true;
 
     recognition.onresult = (e) => {
-      if (_safeGetGlobal("STATE", "") !== "listen") return;
+      if (_safeGet("STATE", "") !== "listen") return;
 
       const res = e?.results?.[0]?.[0]?.transcript;
-      if (!res || res.trim().length < 2) return;
+      if (!res || !res.trim()) return;
 
-      _safeSetGlobal("lastTranscript", res);
+      const clean = res.trim();
+      _safeSet("lastTranscript", clean);
 
       detectedLanguage =
         (typeof detectLanguage === "function")
-          ? detectLanguage(res)
+          ? detectLanguage(clean)
           : "de";
 
       heardSomething = true;
       _noSpeechCount = 0;
 
-      // ✅ Gespräch-Ende sofort abfangen
-      if (isEndConversationIntent(res)) {
+      try { console.log("📝 onresult:", clean); } catch (e) {}
+
+      if (isEndConversationIntent(clean)) {
         endConversation("intent-detected", detectedLanguage);
+        return;
       }
     };
 
@@ -955,7 +945,7 @@ function ensureRecognition() {
       const err = e?.error || e;
       try { console.warn("🎙️ recognition.onerror:", err); } catch (x) {}
 
-      if (_safeGetGlobal("STATE", "") !== "listen") return;
+      if (_safeGet("STATE", "") !== "listen") return;
 
       if (err === "no-speech") {
         _noSpeechCount++;
@@ -968,89 +958,93 @@ function ensureRecognition() {
           try { recognition.abort(); } catch (e2) {}
 
           setTimeout(() => {
-            if (_safeGetGlobal("STATE", "") !== "listen") return;
-            if (_safeGetGlobal("talking", false) || _safeGetGlobal("recRunning", false)) return;
+            if (_safeGet("STATE", "") !== "listen") return;
+            if (_safeGet("talking", false) || _safeGet("recRunning", false)) return;
             try { startRecognition(); } catch (e3) {}
           }, NO_SPEECH_RETRY_MS);
 
           return;
         }
 
-        _safeSetGlobal("recRunning", false);
-        _safeSetGlobal("STATE", "greet");
-        _safeSetGlobal("greeted", true);
+        _safeSet("recRunning", false);
+        _safeSet("STATE", "greet");
+        _safeSet("greeted", true);
         try { showHint("Kurz Knopf drücken, dann in einem vollständigen Satz fragen"); } catch (e2) {}
+        return;
       }
+
+      // andere Fehler -> sauber zurück
+      _safeSet("recRunning", false);
+      _safeSet("STATE", "greet");
+      try { showHint("Kurz Knopf drücken, dann fragen"); } catch (e2) {}
     };
 
     recognition.onend = () => {
-      _safeSetGlobal("recRunning", false);
+      _safeSet("recRunning", false);
 
       if (_recAbortByUs) {
         _recAbortByUs = false;
         return;
       }
 
-      if (_safeGetGlobal("STATE", "") !== "listen") return;
+      if (_safeGet("STATE", "") !== "listen") return;
 
-      const lastTranscript = _safeGetGlobal("lastTranscript", "");
+      const transcript = _safeGet("lastTranscript", "");
 
       // ===== 1) NICHTS GEHÖRT =====
-      if (!heardSomething || !lastTranscript) {
+      if (!heardSomething || !transcript) {
         const sinceArm = performance.now() - (_listenArmedAt || 0);
 
         if (sinceArm < SILENCE_GRACE_MS) {
-          if (_safeGetGlobal("SESSION_ACTIVE", false)) {
+          if (_safeGet("SESSION_ACTIVE", false)) {
             try { console.log("🕳️ Stille (kurz) – höre weiter…"); } catch (e) {}
-            _safeSetGlobal("STATE", "listen");
-
             setTimeout(() => {
-              if (_safeGetGlobal("STATE", "") !== "listen") return;
-              if (_safeGetGlobal("talking", false) || _safeGetGlobal("recRunning", false)) return;
+              if (_safeGet("STATE", "") !== "listen") return;
+              if (_safeGet("talking", false) || _safeGet("recRunning", false)) return;
               startRecognition();
             }, 650);
-
             return;
           }
 
-          _safeSetGlobal("STATE", "greet");
+          _safeSet("STATE", "greet");
           try { showHint("Kurz Knopf drücken, dann fragen"); } catch (e) {}
           return;
         }
 
-        if (_safeGetGlobal("SESSION_ACTIVE", false)) {
+        if (_safeGet("SESSION_ACTIVE", false)) {
           try { console.log("🕳️ Stille erkannt – höre weiter…"); } catch (e) {}
-          _safeSetGlobal("STATE", "listen");
-
           setTimeout(() => {
-            if (_safeGetGlobal("STATE", "") !== "listen") return;
-            if (_safeGetGlobal("talking", false) || _safeGetGlobal("recRunning", false)) return;
-            _safeSetGlobal("lastTranscript", "");
-            _safeSetGlobal("listeningFinished", false);
+            if (_safeGet("STATE", "") !== "listen") return;
+            if (_safeGet("talking", false) || _safeGet("recRunning", false)) return;
+            _safeSet("lastTranscript", "");
+            _safeSet("listeningFinished", false);
             startRecognition();
           }, 900);
-
           return;
         }
 
-        _safeSetGlobal("STATE", "greet");
+        _safeSet("STATE", "greet");
         try { showHint("Kurz Knopf drücken, dann fragen"); } catch (e) {}
         return;
       }
 
-      // ✅ Sicherheitsnetz: Ende-Intent auch hier
-      if (isEndConversationIntent(lastTranscript)) {
+      // ===== 2) ENDE-INTENT =====
+      if (isEndConversationIntent(transcript)) {
         endConversation("intent-onend", detectedLanguage);
         return;
       }
 
-      // ===== 2) ETWAS GEHÖRT → THINK + FETCH =====
-      _safeSetGlobal("STATE", "think");
+      // ===== 3) ETWAS GEHÖRT → THINK + FETCH =====
+      _safeSet("STATE", "think");
+      _awaitingServer = true;
+
       try { resetMovements(); } catch (e) {}
 
       requestAnimationFrame(() => {
-        _safeSetGlobal("hmNeigen", true);
-        _safeSetGlobal("hmStartTime", performance.now());
+        try {
+          hmNeigen = true;
+          hmStartTime = performance.now();
+        } catch (e) {}
       });
 
       const thinkPhrase =
@@ -1065,11 +1059,9 @@ function ensureRecognition() {
       let thinkStartedAt = 0;
       let thinkWasSpoken = false;
 
-      _awaitingServer = true;
-
       thinkTimer = setTimeout(() => {
-        if (_safeGetGlobal("STATE", "") !== "think") return;
-        if (_safeGetGlobal("talking", false)) return;
+        if (_safeGet("STATE", "") !== "think") return;
+        if (_safeGet("talking", false)) return;
         if (!_awaitingServer) return;
 
         thinkWasSpoken = true;
@@ -1080,24 +1072,38 @@ function ensureRecognition() {
         } catch (e) {}
       }, THINK_DELAY_MS);
 
-      if (_safeGetGlobal("SESSION_ACTIVE", false)) {
-        _safeSetGlobal("SESSION_LAST_TS", Date.now());
-      }
+      try {
+        if (_safeGet("SESSION_ACTIVE", false)) {
+          _safeSet("SESSION_LAST_TS", Date.now());
+        }
+      } catch (e) {}
+
+      try { console.log("📨 sende an /ask:", transcript); } catch (e) {}
 
       fetch("/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          text: lastTranscript,
+          text: transcript,
           lang: detectedLanguage,
-          conversationId: _safeGetGlobal("CONV_ID", null)
+          conversationId: _safeGet("CONV_ID", null)
         })
       })
         .then(async (r) => {
+          const rawText = await r.text();
+
           if (!r.ok) {
-            throw new Error("HTTP " + r.status);
+            throw new Error(`HTTP ${r.status}: ${rawText}`);
           }
-          return r.json();
+
+          let data = null;
+          try {
+            data = JSON.parse(rawText);
+          } catch (parseErr) {
+            throw new Error("Ungültiges JSON von /ask: " + rawText);
+          }
+
+          return data;
         })
         .then((data) => {
           _awaitingServer = false;
@@ -1114,14 +1120,16 @@ function ensureRecognition() {
 
           const proceed = () => {
             const waitForThinkEnd = setInterval(() => {
-              if (!_safeGetGlobal("talking", false)) {
+              if (!_safeGet("talking", false)) {
                 clearInterval(waitForThinkEnd);
 
-                _safeSetGlobal("STATE", "answer");
+                _safeSet("STATE", "answer");
                 try { resetMovements(); } catch (e) {}
 
-                _safeSetGlobal("rising", true);
-                _safeSetGlobal("riseStartTime", performance.now());
+                try {
+                  rising = true;
+                  riseStartTime = performance.now();
+                } catch (e) {}
 
                 let answerLang = "de";
                 if (data && (data.answerLang === "en" || data.answerLang === "de")) {
@@ -1132,12 +1140,18 @@ function ensureRecognition() {
 
                 const answerText =
                   (data && typeof data.answer === "string" && data.answer.trim())
-                    ? data.answer
+                    ? data.answer.trim()
                     : "Verzeiht, ich habe darauf im Augenblick keine gute Antwort.";
+
+                try { console.log("✅ Antwort von /ask:", answerText); } catch (e) {}
 
                 try {
                   speak(answerText, false, answerLang);
-                } catch (e) {}
+                } catch (speakErr) {
+                  console.warn("❌ speak() Fehler:", speakErr);
+                  _safeSet("STATE", "greet");
+                  try { showHint("Kurz Knopf drücken, dann fragen"); } catch (e) {}
+                }
               }
             }, 120);
           };
@@ -1146,8 +1160,6 @@ function ensureRecognition() {
           else proceed();
         })
         .catch((err) => {
-          try { console.warn("❌ /ask Fehler:", err); } catch (e) {}
-
           _awaitingServer = false;
 
           if (thinkTimer) {
@@ -1155,16 +1167,21 @@ function ensureRecognition() {
             thinkTimer = null;
           }
 
-          _safeSetGlobal("STATE", "answer");
+          try { console.warn("❌ /ask Fehler:", err); } catch (e) {}
+
+          _safeSet("STATE", "answer");
           try { resetMovements(); } catch (e) {}
 
           try {
             speak(
-              "Verzeiht, ich habe Euch nicht recht verstanden.",
+              "Verzeiht, es gab ein Problem bei meiner Antwort.",
               false,
               "de"
             );
-          } catch (e) {}
+          } catch (e) {
+            _safeSet("STATE", "greet");
+            try { showHint("Kurz Knopf drücken, dann fragen"); } catch (e2) {}
+          }
         });
     };
   }
@@ -1176,7 +1193,7 @@ function startRecognition() {
   const r = ensureRecognition();
   if (!r) {
     try { console.warn("🛑 SpeechRecognition nicht verfügbar."); } catch (e) {}
-    _safeSetGlobal("recRunning", false);
+    _safeSet("recRunning", false);
     return;
   }
 
@@ -1184,41 +1201,45 @@ function startRecognition() {
   _recSessionId++;
 
   heardSomething = false;
-  _safeSetGlobal("lastTranscript", "");
+  _safeSet("lastTranscript", "");
   _listenArmedAt = performance.now();
 
-  if (_safeGetGlobal("recRunning", false)) {
+  if (_safeGet("recRunning", false)) {
     _recAbortByUs = true;
     try { r.abort(); } catch (e) {}
-    _safeSetGlobal("recRunning", false);
+    _safeSet("recRunning", false);
   }
 
-  _safeSetGlobal("recRunning", true);
+  _safeSet("recRunning", true);
 
   try {
     r.start();
+    try { console.log("🎙️ Recognition gestartet:", r.lang); } catch (e) {}
   } catch (e) {
-    _safeSetGlobal("recRunning", false);
+    _safeSet("recRunning", false);
     try { console.warn("🛑 Recognition start() fehlgeschlagen, retry…", e); } catch (x) {}
 
     setTimeout(() => {
-      if (_safeGetGlobal("STATE", "") !== "listen") return;
+      if (_safeGet("STATE", "") !== "listen") return;
 
       const rr = ensureRecognition();
       if (!rr) return;
 
       rr.lang = (detectedLanguage === "en") ? "en-US" : "de-DE";
       heardSomething = false;
-      _safeSetGlobal("lastTranscript", "");
+      _safeSet("lastTranscript", "");
       _listenArmedAt = performance.now();
 
-      _safeSetGlobal("recRunning", true);
+      _safeSet("recRunning", true);
 
       try {
         rr.start();
+        try { console.log("🎙️ Recognition retry gestartet:", rr.lang); } catch (e2) {}
       } catch (e2) {
-        _safeSetGlobal("recRunning", false);
+        _safeSet("recRunning", false);
         try { console.warn("🛑 Recognition retry start() fehlgeschlagen:", e2); } catch (x2) {}
+        _safeSet("STATE", "greet");
+        try { showHint("Kurz Knopf drücken, dann fragen"); } catch (e3) {}
       }
     }, 250);
   }
