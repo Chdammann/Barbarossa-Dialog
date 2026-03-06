@@ -756,9 +756,9 @@ function autoListenNextTurn(reason = "") {
 }
 /* -----------------------------
    STATE MACHINE – RECOGNITION
-   MIT THINK-PHASE (WAKE-SICHER) – FIXED v4.1.1
+   MIT THINK-PHASE (WAKE-SICHER) – FIXED v4.1.2
    (SERVER DECIDES LANGUAGE, CLIENT SENDS lang AS FALLBACK)
-   + Gesprächsende aus server.js wird sauber übernommen
+   + Gesprächsende wird CLIENTSEITIG hart abgeschlossen
 ----------------------------- */
 
 let recognition = null;
@@ -910,7 +910,7 @@ function ensureRecognition() {
               lastTranscript = "";
               listeningFinished = false;
               startRecognition();
-            }, 900); // ✅ länger als vorher
+            }, 900);
 
             return;
           }
@@ -1010,18 +1010,60 @@ function ensureRecognition() {
                 // Engine-Hilfe aktualisieren (stabilisiert Folgeerkennung)
                 detectedLanguage = answerLang;
 
-                // ✅ Gesprächsende aus server.js übernehmen
+                const answerText =
+                  (data && typeof data.answer === "string" && data.answer.trim())
+                    ? data.answer
+                    : "Verzeiht, ich habe Euch nicht recht verstanden.";
+
                 const conversationEnded = !!(data && data.ended === true);
 
                 if (conversationEnded) {
-                  try { window._SESSION_ENDED = true; } catch (e) {}
+                  // ✅ Gespräch wird nach der Abschiedsantwort HART beendet
                   try { SESSION_ACTIVE = false; } catch (e) {}
                   try { CONV_ID = null; } catch (e) {}
-                } else {
-                  try { window._SESSION_ENDED = false; } catch (e) {}
+
+                  // alte Listen-Events ins Leere laufen lassen
+                  _recSessionId++;
+
+                  speak(answerText, false, answerLang, () => {
+                    try {
+                      _recAbortByUs = true;
+                      if (recognition) recognition.abort();
+                    } catch (e) {}
+
+                    recRunning = false;
+                    heardSomething = false;
+                    lastTranscript = "";
+                    listeningFinished = false;
+                    _awaitingServer = false;
+                    _noSpeechCount = 0;
+
+                    greeted = false;
+                    STATE = "idle";
+
+                    try { hideHint(); } catch (e) {}
+                    try { resetMovements(); } catch (e) {}
+
+                    try {
+                      hmNeigen = false;
+                      rising = false;
+                      frontalFix = false;
+                    } catch (e) {}
+
+                    try {
+                      if (model) {
+                        model.position.y = baseY;
+                        model.rotation.x = baseRotX;
+                        model.rotation.y = baseRotY - Math.PI / 2;
+                      }
+                    } catch (e) {}
+                  });
+
+                  return;
                 }
 
-                speak(data.answer, false, answerLang);
+                // ✅ Normaler Dialog: einfach normale Antwort sprechen
+                speak(answerText, false, answerLang);
               }
             }, 120);
           };
