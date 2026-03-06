@@ -756,9 +756,10 @@ function autoListenNextTurn(reason = "") {
 }
 /* -----------------------------
    STATE MACHINE – RECOGNITION
-   MIT THINK-PHASE (WAKE-SICHER) – FIXED v4.2.1
+   MIT THINK-PHASE (WAKE-SICHER) – FIXED v4.2.2
    (SERVER DECIDES LANGUAGE, CLIENT SENDS lang AS FALLBACK)
    + ✅ Gespräch beenden: Stop Listening + Reset auf Startzustand
+   + ✅ robustere Guards gegen Runtime-Fehler
 ----------------------------- */
 
 let recognition = null;
@@ -782,15 +783,31 @@ const NO_SPEECH_RETRY_MS    = 900;   // Pause bevor neu gestartet wird
 const SILENCE_GRACE_MS      = 4500;  // erst nach echter Pause "stille erkannt" behandeln
 
 /* ===============================
+   Kleine Safe-Helper
+================================ */
+function _safeSetGlobal(name, value) {
+  try {
+    globalThis[name] = value;
+  } catch (e) {}
+}
+
+function _safeGetGlobal(name, fallback = undefined) {
+  try {
+    return (typeof globalThis[name] !== "undefined") ? globalThis[name] : fallback;
+  } catch (e) {
+    return fallback;
+  }
+}
+
+/* ===============================
    ✅ Gespräch beenden (Client-seitig, absolut)
    -> stoppt Aufnahme, beendet Session, Pose zurück, optional Abschlusssatz
 ================================ */
-
 function _normalizeTextForEndIntent(s) {
   return String(s || "")
     .toLowerCase()
     .trim()
-    .replace(/[“”„”"']/g, "")
+    .replace(/[“”„"']/g, "")
     .replace(/[^\p{L}\p{N}\s-]/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -801,7 +818,6 @@ function isEndConversationIntent(text) {
   if (!t) return false;
 
   // ✅ STRIKT: nur wenn wirklich "Gespräch ... beendet/zu ende/over/ended" vorkommt
-  // Deutsch
   const de =
     (t.includes("gespräch") || t.includes("gespraech")) &&
     (
@@ -811,7 +827,6 @@ function isEndConversationIntent(text) {
       t.includes("vorbei")
     );
 
-  // Englisch
   const en =
     (t.includes("conversation") || t.includes("talk") || t.includes("chat")) &&
     (
@@ -828,39 +843,43 @@ function isEndConversationIntent(text) {
 function endConversation(reason = "user", langHint = "de") {
   try { console.log("🛑 Gespräch beendet:", reason); } catch (e) {}
 
-  // ✅ Session/Listen hart invalidieren (alte onend Events “verpuffen”)
+  // ✅ Session/Listen hart invalidieren
   _recSessionId++;
 
   // --- Session beenden ---
-  try { SESSION_ACTIVE = false; } catch (e) {}
-  try { CONV_ID = null; } catch (e) {}
-  try { SESSION_LAST_TS = Date.now(); } catch (e) {}
+  _safeSetGlobal("SESSION_ACTIVE", false);
+  _safeSetGlobal("CONV_ID", null);
+  _safeSetGlobal("SESSION_LAST_TS", Date.now());
 
   // --- alle Listen/Retry-Guards hart zurücksetzen ---
   _awaitingServer = false;
   _noSpeechCount = 0;
   _listenArmedAt = 0;
   heardSomething = false;
-  lastTranscript = "";
-  listeningFinished = false;
+
+  _safeSetGlobal("lastTranscript", "");
+  _safeSetGlobal("listeningFinished", false);
 
   // --- Recognition hart beenden ---
   try {
     _recAbortByUs = true;
     if (recognition) recognition.abort();
   } catch (e) {}
-  recRunning = false;
+  _safeSetGlobal("recRunning", false);
 
   // --- State zurück wie VOR Begrüßung ---
-  greeted = false;
-  STATE = "idle";
+  _safeSetGlobal("greeted", false);
+  _safeSetGlobal("STATE", "idle");
 
   // --- Bewegungen / Pose sauber zurück ---
   try { resetMovements(); } catch (e) {}
-  try { hmNeigen = false; rising = false; } catch (e) {}
+  try {
+    _safeSetGlobal("hmNeigen", false);
+    _safeSetGlobal("rising", false);
+  } catch (e) {}
 
   try {
-    if (model) {
+    if (typeof model !== "undefined" && model) {
       model.position.y = baseY;
       model.rotation.x = baseRotX;
       model.rotation.y = baseRotY - Math.PI / 2;
@@ -873,15 +892,13 @@ function endConversation(reason = "user", langHint = "de") {
   // --- Abschlusssatz ---
   const finalDe = "Verehrter Bürger der Neuzeit, ich danke für unseren anregenden Austausch.";
   const finalEn = "Honoured citizen of this modern age, I thank thee for our stirring exchange.";
-
   const finalText = (langHint === "en") ? finalEn : finalDe;
 
-  // Wenn gerade gesprochen wird, nicht reinfunken
   try {
-    if (!talking) {
+    if (!_safeGetGlobal("talking", false)) {
       speak(finalText, false, (langHint === "en") ? "en" : "de", () => {
         try { hideHint(); } catch (e) {}
-        STATE = "idle";
+        _safeSetGlobal("STATE", "idle");
       });
     }
   } catch (e) {}
@@ -905,6 +922,7 @@ function ensureRecognition() {
     recognition = new SR();
     recognition.continuous = false;
     recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
     _recHandlersBound = false;
   }
 
@@ -912,14 +930,13 @@ function ensureRecognition() {
     _recHandlersBound = true;
 
     recognition.onresult = (e) => {
-      if (STATE !== "listen") return;
+      if (_safeGetGlobal("STATE", "") !== "listen") return;
 
       const res = e?.results?.[0]?.[0]?.transcript;
       if (!res || res.trim().length < 2) return;
 
-      lastTranscript = res;
+      _safeSetGlobal("lastTranscript", res);
 
-      // Lokale Detektion nur als Hint für Recognition.lang / Think-Phrase
       detectedLanguage =
         (typeof detectLanguage === "function")
           ? detectLanguage(res)
@@ -928,18 +945,17 @@ function ensureRecognition() {
       heardSomething = true;
       _noSpeechCount = 0;
 
-      // ✅ Gespräch-Ende sofort abfangen (bevor onend/fetch)
+      // ✅ Gespräch-Ende sofort abfangen
       if (isEndConversationIntent(res)) {
         endConversation("intent-detected", detectedLanguage);
-        return;
       }
     };
 
     recognition.onerror = (e) => {
       const err = e?.error || e;
-      try { console.warn("🎙️ recognition.onerror:", err); } catch {}
+      try { console.warn("🎙️ recognition.onerror:", err); } catch (x) {}
 
-      if (STATE !== "listen") return;
+      if (_safeGetGlobal("STATE", "") !== "listen") return;
 
       if (err === "no-speech") {
         _noSpeechCount++;
@@ -952,76 +968,72 @@ function ensureRecognition() {
           try { recognition.abort(); } catch (e2) {}
 
           setTimeout(() => {
-            if (STATE !== "listen") return;
-            if (talking || recRunning) return;
+            if (_safeGetGlobal("STATE", "") !== "listen") return;
+            if (_safeGetGlobal("talking", false) || _safeGetGlobal("recRunning", false)) return;
             try { startRecognition(); } catch (e3) {}
           }, NO_SPEECH_RETRY_MS);
 
           return;
         }
 
-        recRunning = false;
-        STATE = "greet";
-        greeted = true;
+        _safeSetGlobal("recRunning", false);
+        _safeSetGlobal("STATE", "greet");
+        _safeSetGlobal("greeted", true);
         try { showHint("Kurz Knopf drücken, dann in einem vollständigen Satz fragen"); } catch (e2) {}
-        return;
       }
     };
 
     recognition.onend = () => {
-      recRunning = false;
+      _safeSetGlobal("recRunning", false);
 
       if (_recAbortByUs) {
         _recAbortByUs = false;
         return;
       }
 
-      const endedSession = _recSessionId;
+      if (_safeGetGlobal("STATE", "") !== "listen") return;
 
-      if (STATE !== "listen") return;
-      if (endedSession !== _recSessionId) return;
+      const lastTranscript = _safeGetGlobal("lastTranscript", "");
 
       // ===== 1) NICHTS GEHÖRT =====
       if (!heardSomething || !lastTranscript) {
-
         const sinceArm = performance.now() - (_listenArmedAt || 0);
-        if (sinceArm < SILENCE_GRACE_MS) {
-          try {
-            if (SESSION_ACTIVE) {
-              console.log("🕳️ Stille (kurz) – höre weiter…");
-              STATE = "listen";
-              setTimeout(() => {
-                if (STATE !== "listen") return;
-                if (talking || recRunning) return;
-                startRecognition();
-              }, 650);
-              return;
-            }
-          } catch (e) {}
 
-          STATE = "greet";
+        if (sinceArm < SILENCE_GRACE_MS) {
+          if (_safeGetGlobal("SESSION_ACTIVE", false)) {
+            try { console.log("🕳️ Stille (kurz) – höre weiter…"); } catch (e) {}
+            _safeSetGlobal("STATE", "listen");
+
+            setTimeout(() => {
+              if (_safeGetGlobal("STATE", "") !== "listen") return;
+              if (_safeGetGlobal("talking", false) || _safeGetGlobal("recRunning", false)) return;
+              startRecognition();
+            }, 650);
+
+            return;
+          }
+
+          _safeSetGlobal("STATE", "greet");
           try { showHint("Kurz Knopf drücken, dann fragen"); } catch (e) {}
           return;
         }
 
-        try {
-          if (SESSION_ACTIVE) {
-            console.log("🕳️ Stille erkannt – höre weiter…");
-            STATE = "listen";
+        if (_safeGetGlobal("SESSION_ACTIVE", false)) {
+          try { console.log("🕳️ Stille erkannt – höre weiter…"); } catch (e) {}
+          _safeSetGlobal("STATE", "listen");
 
-            setTimeout(() => {
-              if (STATE !== "listen") return;
-              if (talking || recRunning) return;
-              lastTranscript = "";
-              listeningFinished = false;
-              startRecognition();
-            }, 900);
+          setTimeout(() => {
+            if (_safeGetGlobal("STATE", "") !== "listen") return;
+            if (_safeGetGlobal("talking", false) || _safeGetGlobal("recRunning", false)) return;
+            _safeSetGlobal("lastTranscript", "");
+            _safeSetGlobal("listeningFinished", false);
+            startRecognition();
+          }, 900);
 
-            return;
-          }
-        } catch (e) {}
+          return;
+        }
 
-        STATE = "greet";
+        _safeSetGlobal("STATE", "greet");
         try { showHint("Kurz Knopf drücken, dann fragen"); } catch (e) {}
         return;
       }
@@ -1033,12 +1045,12 @@ function ensureRecognition() {
       }
 
       // ===== 2) ETWAS GEHÖRT → THINK + FETCH =====
-      STATE = "think";
-      resetMovements();
+      _safeSetGlobal("STATE", "think");
+      try { resetMovements(); } catch (e) {}
 
       requestAnimationFrame(() => {
-        hmNeigen = true;
-        hmStartTime = performance.now();
+        _safeSetGlobal("hmNeigen", true);
+        _safeSetGlobal("hmStartTime", performance.now());
       });
 
       const thinkPhrase =
@@ -1056,17 +1068,21 @@ function ensureRecognition() {
       _awaitingServer = true;
 
       thinkTimer = setTimeout(() => {
-        if (STATE !== "think") return;
-        if (talking) return;
+        if (_safeGetGlobal("STATE", "") !== "think") return;
+        if (_safeGetGlobal("talking", false)) return;
         if (!_awaitingServer) return;
 
         thinkWasSpoken = true;
         thinkStartedAt = Date.now();
 
-        speak(thinkPhrase, true, (detectedLanguage === "en") ? "en" : "de");
+        try {
+          speak(thinkPhrase, true, (detectedLanguage === "en") ? "en" : "de");
+        } catch (e) {}
       }, THINK_DELAY_MS);
 
-      try { if (SESSION_ACTIVE) SESSION_LAST_TS = Date.now(); } catch (e) {}
+      if (_safeGetGlobal("SESSION_ACTIVE", false)) {
+        _safeSetGlobal("SESSION_LAST_TS", Date.now());
+      }
 
       fetch("/ask", {
         method: "POST",
@@ -1074,11 +1090,16 @@ function ensureRecognition() {
         body: JSON.stringify({
           text: lastTranscript,
           lang: detectedLanguage,
-          conversationId: (typeof CONV_ID !== "undefined" && CONV_ID) ? CONV_ID : null
+          conversationId: _safeGetGlobal("CONV_ID", null)
         })
       })
-        .then(r => r.json())
-        .then(data => {
+        .then(async (r) => {
+          if (!r.ok) {
+            throw new Error("HTTP " + r.status);
+          }
+          return r.json();
+        })
+        .then((data) => {
           _awaitingServer = false;
 
           if (thinkTimer) {
@@ -1093,14 +1114,14 @@ function ensureRecognition() {
 
           const proceed = () => {
             const waitForThinkEnd = setInterval(() => {
-              if (!talking) {
+              if (!_safeGetGlobal("talking", false)) {
                 clearInterval(waitForThinkEnd);
 
-                STATE = "answer";
-                resetMovements();
+                _safeSetGlobal("STATE", "answer");
+                try { resetMovements(); } catch (e) {}
 
-                rising = true;
-                riseStartTime = performance.now();
+                _safeSetGlobal("rising", true);
+                _safeSetGlobal("riseStartTime", performance.now());
 
                 let answerLang = "de";
                 if (data && (data.answerLang === "en" || data.answerLang === "de")) {
@@ -1108,7 +1129,15 @@ function ensureRecognition() {
                 }
 
                 detectedLanguage = answerLang;
-                speak(data.answer, false, answerLang);
+
+                const answerText =
+                  (data && typeof data.answer === "string" && data.answer.trim())
+                    ? data.answer
+                    : "Verzeiht, ich habe darauf im Augenblick keine gute Antwort.";
+
+                try {
+                  speak(answerText, false, answerLang);
+                } catch (e) {}
               }
             }, 120);
           };
@@ -1116,7 +1145,9 @@ function ensureRecognition() {
           if (extraDelay > 0) setTimeout(proceed, extraDelay);
           else proceed();
         })
-        .catch(() => {
+        .catch((err) => {
+          try { console.warn("❌ /ask Fehler:", err); } catch (e) {}
+
           _awaitingServer = false;
 
           if (thinkTimer) {
@@ -1124,14 +1155,16 @@ function ensureRecognition() {
             thinkTimer = null;
           }
 
-          STATE = "answer";
-          resetMovements();
+          _safeSetGlobal("STATE", "answer");
+          try { resetMovements(); } catch (e) {}
 
-          speak(
-            "Verzeiht, ich habe Euch nicht recht verstanden.",
-            false,
-            "de"
-          );
+          try {
+            speak(
+              "Verzeiht, ich habe Euch nicht recht verstanden.",
+              false,
+              "de"
+            );
+          } catch (e) {}
         });
     };
   }
@@ -1142,8 +1175,8 @@ function ensureRecognition() {
 function startRecognition() {
   const r = ensureRecognition();
   if (!r) {
-    try { console.warn("🛑 SpeechRecognition nicht verfügbar."); } catch {}
-    recRunning = false;
+    try { console.warn("🛑 SpeechRecognition nicht verfügbar."); } catch (e) {}
+    _safeSetGlobal("recRunning", false);
     return;
   }
 
@@ -1151,46 +1184,49 @@ function startRecognition() {
   _recSessionId++;
 
   heardSomething = false;
-  lastTranscript = "";
+  _safeSetGlobal("lastTranscript", "");
   _listenArmedAt = performance.now();
 
-  if (recRunning) {
+  if (_safeGetGlobal("recRunning", false)) {
     _recAbortByUs = true;
     try { r.abort(); } catch (e) {}
-    recRunning = false;
+    _safeSetGlobal("recRunning", false);
   }
 
-  recRunning = true;
+  _safeSetGlobal("recRunning", true);
+
   try {
     r.start();
   } catch (e) {
-    recRunning = false;
-    try { console.warn("🛑 Recognition start() fehlgeschlagen, retry…", e); } catch {}
+    _safeSetGlobal("recRunning", false);
+    try { console.warn("🛑 Recognition start() fehlgeschlagen, retry…", e); } catch (x) {}
 
     setTimeout(() => {
-      if (STATE !== "listen") return;
+      if (_safeGetGlobal("STATE", "") !== "listen") return;
 
       const rr = ensureRecognition();
       if (!rr) return;
 
       rr.lang = (detectedLanguage === "en") ? "en-US" : "de-DE";
       heardSomething = false;
-      lastTranscript = "";
+      _safeSetGlobal("lastTranscript", "");
       _listenArmedAt = performance.now();
 
-      recRunning = true;
+      _safeSetGlobal("recRunning", true);
+
       try {
         rr.start();
       } catch (e2) {
-        recRunning = false;
-        try { console.warn("🛑 Recognition retry start() fehlgeschlagen:", e2); } catch {}
+        _safeSetGlobal("recRunning", false);
+        try { console.warn("🛑 Recognition retry start() fehlgeschlagen:", e2); } catch (x2) {}
       }
     }, 250);
   }
 }
+
 /* -----------------------------
    BUTTON + ENTER – GREET & LISTEN
-   STABIL – FIXED v3 (FLAG RESYNC → ENTER NIE TOT) – REVIEWED
+   STABIL – FIXED v3.1 (SYNTAX-CLEAN / REVIEWED)
 ----------------------------- */
 
 const micBtn = document.getElementById("micBtn");
@@ -1219,12 +1255,13 @@ if (!micBtn) {
      (häufigster Grund für "Enter tot" ohne Errors)
   ================================ */
   let _lastHealAt = 0;
+
   function healIfStuck(tag = "") {
     const now = performance.now();
     if (now - _lastHealAt < 200) return; // Entprellen
     _lastHealAt = now;
 
-    // talking-Desync heilen (Chrome liefert manchmal speaking=false, aber talking bleibt true)
+    // talking-Desync heilen
     try {
       const speaking = !!(window.speechSynthesis && speechSynthesis.speaking);
       if (!speaking && typeof talking !== "undefined" && talking) {
@@ -1241,9 +1278,13 @@ if (!micBtn) {
       }
     } catch (e) {}
 
-    // Wenn alles ruhig ist, aber STATE hängt → zurück auf greet (Hint bleibt sinnvoll)
+    // Wenn alles ruhig ist, aber STATE hängt → zurück auf greet
     try {
-      const quiet = (!talking && !recRunning);
+      const quiet = (
+        (typeof talking !== "undefined" ? !talking : true) &&
+        (typeof recRunning !== "undefined" ? !recRunning : true)
+      );
+
       if (quiet && typeof STATE !== "undefined" && STATE !== "idle" && STATE !== "greet") {
         console.warn("🩹 heal:", tag, "STATE hängt:", STATE, "→ greet");
         STATE = "greet";
@@ -1258,12 +1299,15 @@ if (!micBtn) {
     healIfStuck("enter/click");
 
     // 🛡️ keine parallelen Aktionen
-    if (talking || recRunning) return;
+    if (
+      (typeof talking !== "undefined" && talking) ||
+      (typeof recRunning !== "undefined" && recRunning)
+    ) return;
 
     // 🔒 Doppelklick-Schutz / Tasterprellen
-    if (buttonLocked) return;
+    if (typeof buttonLocked !== "undefined" && buttonLocked) return;
     buttonLocked = true;
-    setTimeout(() => buttonLocked = false, 350);
+    setTimeout(() => { buttonLocked = false; }, 350);
 
     /* ===============================
          1️⃣ IDLE → GREET
@@ -1271,7 +1315,6 @@ if (!micBtn) {
     if (STATE === "idle" && !greeted) {
 
       // === 🔹 DIALOG SESSION START (SAFE) ===
-      // (Falls Variablen/Funktionen nicht existieren: sauber abfangen, keine ReferenceErrors)
       try {
         if (typeof SESSION_ACTIVE === "undefined") window.SESSION_ACTIVE = false;
         if (typeof SESSION_LAST_TS === "undefined") window.SESSION_LAST_TS = 0;
@@ -1282,12 +1325,13 @@ if (!micBtn) {
         if (!SESSION_ACTIVE) {
           SESSION_ACTIVE = true;
           SESSION_LAST_TS = Date.now();
+
           if (typeof createConversationId === "function") {
             CONV_ID = createConversationId();
           } else {
-            // Fallback: einfache ID (nur wenn deine Funktion fehlt)
             CONV_ID = `conv_${Date.now()}_${Math.random().toString(16).slice(2)}`;
           }
+
           try { console.log("🗣️ Neue Dialog-Session:", CONV_ID); } catch (e) {}
         }
       } catch (e) {}
@@ -1308,7 +1352,7 @@ if (!micBtn) {
       greeted = true;
       STATE = "greet";
 
-      resetMovements();
+      try { resetMovements(); } catch (e) {}
 
       frontalFix = false;
       rising = true;
@@ -1319,22 +1363,26 @@ if (!micBtn) {
       listeningFinished = false;
 
       speak(
-        "Seid gegrüßt, mein Freund. Ich bin Friedrich Barbarossa, nach fast neunhundert Jahren im Kaiserberg zu Lautern erwacht. Was ist Euer Begehr? Nennt mir gern euren edlen Namen
-         If ju wonnt, ju kenn ollso ask in inglisch.",
+        "Seid gegrüßt, mein Freund. Ich bin Friedrich Barbarossa, nach fast neunhundert Jahren im Kaiserberg zu Lautern erwacht. Was ist Euer Begehr? Nennt mir gern Euren edlen Namen. If you want, you can also ask in English.",
         false,
         "de",
-        () => { try { showHint("Kurz Knopf drücken, dann fragen"); } catch (e) {} }
+        () => {
+          try { showHint("Kurz Knopf drücken, dann fragen"); } catch (e) {}
+        }
       );
 
       // Auto-Reset nach 2 Minuten
-      if (greetTimeout) clearTimeout(greetTimeout);
+      if (typeof greetTimeout !== "undefined" && greetTimeout) {
+        clearTimeout(greetTimeout);
+      }
+
       greetTimeout = setTimeout(() => {
         healIfStuck("greet-timeout-check");
 
         if (STATE === "greet" && !recRunning && !talking) {
-          console.log("⏳ Begrüßung ohne Reaktion – Reset auf Startzustand");
+          try { console.log("⏳ Begrüßung ohne Reaktion – Reset auf Startzustand"); } catch (e) {}
 
-          resetMovements();
+          try { resetMovements(); } catch (e) {}
           greeted = false;
           lastTranscript = "";
           STATE = "idle";
@@ -1347,11 +1395,13 @@ if (!micBtn) {
             CONV_ID = null;
           } catch (e) {}
 
-          if (model) {
-            model.position.y = baseY;
-            model.rotation.x = baseRotX;
-            model.rotation.y = baseRotY - Math.PI / 2;
-          }
+          try {
+            if (model) {
+              model.position.y = baseY;
+              model.rotation.x = baseRotX;
+              model.rotation.y = baseRotY - Math.PI / 2;
+            }
+          } catch (e) {}
         }
       }, 120000);
 
@@ -1362,7 +1412,6 @@ if (!micBtn) {
          2️⃣ GREET → LISTEN
     =============================== */
     if (STATE === "greet" && !recRunning) {
-
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SR) {
         alert("Spracherkennung wird von diesem Browser nicht unterstützt.");
@@ -1379,7 +1428,7 @@ if (!micBtn) {
       // Hint sofort weg beim Start Listening
       try { hideHint(); } catch (e) {}
 
-      if (greetTimeout) {
+      if (typeof greetTimeout !== "undefined" && greetTimeout) {
         clearTimeout(greetTimeout);
         greetTimeout = null;
       }
@@ -1397,7 +1446,7 @@ if (!micBtn) {
         if (STATE === "listen" && !recRunning) {
           console.warn("⚠️ Recognition start fehlgeschlagen – Fallback auf greet");
           STATE = "greet";
-          resetMovements();
+          try { resetMovements(); } catch (e) {}
           try { showHint("Kurz Knopf drücken, dann in einem kurzen, vollständigen Satz fragen"); } catch (e) {}
         }
       }, 900);
@@ -1405,7 +1454,7 @@ if (!micBtn) {
       return;
     }
 
-    // LISTEN ignoriert Enter (wie gehabt)
+    // LISTEN ignoriert Enter
     if (STATE === "listen") return;
   }
 }
