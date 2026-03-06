@@ -1223,10 +1223,9 @@ function startRecognition() {
     }, 250);
   }
 }
-
 /* -----------------------------
    BUTTON + ENTER – GREET & LISTEN
-   STABIL – FIXED v3.1 (SYNTAX-CLEAN / REVIEWED)
+   STABIL – FIXED v3.2 (NO LISTEN-LOOP)
 ----------------------------- */
 
 const micBtn = document.getElementById("micBtn");
@@ -1252,7 +1251,9 @@ if (!micBtn) {
 
   /* ===============================
      🔧 RESYNC: Flags & State heilen
-     (häufigster Grund für "Enter tot" ohne Errors)
+     WICHTIG:
+     - NICHT mehr aggressiv listen/think/answer auf greet setzen
+     - sonst entsteht die Aufnahme-Schleife
   ================================ */
   let _lastHealAt = 0;
 
@@ -1278,23 +1279,11 @@ if (!micBtn) {
       }
     } catch (e) {}
 
-    // Wenn alles ruhig ist, aber STATE hängt → zurück auf greet
-    try {
-      const quiet = (
-        (typeof talking !== "undefined" ? !talking : true) &&
-        (typeof recRunning !== "undefined" ? !recRunning : true)
-      );
-
-      if (quiet && typeof STATE !== "undefined" && STATE !== "idle" && STATE !== "greet") {
-        console.warn("🩹 heal:", tag, "STATE hängt:", STATE, "→ greet");
-        STATE = "greet";
-        try { showHint("Kurz Knopf drücken, dann fragen"); } catch (e) {}
-      }
-    } catch (e) {}
+    // ✅ KEIN hartes STATE-Heilen mehr während listen/think/answer
+    // Das hat die Schleife erzeugt.
   }
 
   function startInteraction() {
-
     // ✅ vor jeder Aktion heilen
     healIfStuck("enter/click");
 
@@ -1439,11 +1428,12 @@ if (!micBtn) {
 
       startRecognition();
 
-      // Falls Recognition nicht startet → zurück zu greet + Hint
+      // Falls Recognition gar nicht startet → zurück zu greet + Hint
       setTimeout(() => {
+        // hier nur Desyncs heilen, aber NICHT STATE umbiegen
         healIfStuck("listen-start-guard");
 
-        if (STATE === "listen" && !recRunning) {
+        if (STATE === "listen" && !recRunning && !talking) {
           console.warn("⚠️ Recognition start fehlgeschlagen – Fallback auf greet");
           STATE = "greet";
           try { resetMovements(); } catch (e) {}
