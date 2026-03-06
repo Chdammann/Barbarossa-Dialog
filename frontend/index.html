@@ -757,6 +757,7 @@ function autoListenNextTurn(reason = "") {
 /* -----------------------------
    STATE MACHINE – RECOGNITION
    STABLE BASE VERSION + CONTINUOUS DIALOG
+   MINIMAL FIX: nach Antwort wieder zuhören
 ----------------------------- */
 
 let recognition = null;
@@ -857,32 +858,42 @@ function ensureRecognition() {
           conversationId: CONV_ID || null
         })
       })
-        .then(r => r.json())
-        .then(data => {
-          STATE = "answer";
+      .then(r => r.json())
+      .then(data => {
+        STATE = "answer";
 
-          resetMovements();
+        resetMovements();
 
-          rising = true;
-          riseStartTime = performance.now();
+        rising = true;
+        riseStartTime = performance.now();
 
-          let answerLang = "de";
-          if (data && (data.answerLang === "de" || data.answerLang === "en")) {
-            answerLang = data.answerLang;
+        let answerLang = "de";
+
+        if (data && (data.answerLang === "de" || data.answerLang === "en")) {
+          answerLang = data.answerLang;
+        }
+
+        detectedLanguage = answerLang;
+
+        const answer =
+          data && data.answer
+            ? data.answer
+            : "Verzeiht, darauf weiß ich im Moment keine gute Antwort.";
+
+        console.log("✅ Antwort:", answer);
+
+        speak(answer, false, answerLang);
+
+        // ✅ WICHTIG: nicht auf callback verlassen,
+        // sondern wirklich warten, bis das Sprechen fertig ist
+        const waitForAnswerEnd = setInterval(() => {
+          if (STATE !== "answer") {
+            clearInterval(waitForAnswerEnd);
+            return;
           }
 
-          detectedLanguage = answerLang;
-
-          const answer =
-            data && data.answer
-              ? data.answer
-              : "Verzeiht, darauf weiß ich im Moment keine gute Antwort.";
-
-          console.log("✅ Antwort:", answer);
-
-          speak(answer, false, answerLang, () => {
-            // ✅ Nach der Antwort direkt weiter zuhören
-            if (STATE !== "answer") return;
+          if (!talking) {
+            clearInterval(waitForAnswerEnd);
 
             lastTranscript = "";
             heardSomething = false;
@@ -895,22 +906,22 @@ function ensureRecognition() {
               if (talking || recRunning) return;
               startRecognition();
             }, 350);
-          });
-        })
-        .catch(err => {
-          console.warn("❌ /ask Fehler:", err);
+          }
+        }, 120);
+      })
+      .catch(err => {
+        console.warn("❌ /ask Fehler:", err);
 
-          STATE = "greet";
+        STATE = "greet";
 
-          speak(
-            "Verzeiht, es gab ein Problem bei meiner Antwort.",
-            false,
-            "de",
-            () => {
-              showHint("Kurz Knopf drücken, dann fragen");
-            }
-          );
-        });
+        speak(
+          "Verzeiht, es gab ein Problem bei meiner Antwort.",
+          false,
+          "de"
+        );
+
+        showHint("Kurz Knopf drücken, dann fragen");
+      });
     };
   }
 
@@ -951,6 +962,7 @@ function startRecognition() {
 const micBtn = document.getElementById("micBtn");
 
 if (micBtn) {
+
   micBtn.onclick = startInteraction;
 
   document.addEventListener("keydown", (e) => {
@@ -958,9 +970,11 @@ if (micBtn) {
     e.preventDefault();
     startInteraction();
   });
+
 }
 
 function startInteraction() {
+
   if (talking || recRunning) return;
 
   if (STATE === "think" || STATE === "answer") return;
@@ -970,6 +984,7 @@ function startInteraction() {
   =============================== */
 
   if (STATE === "idle" && !greeted) {
+
     greeted = true;
     STATE = "greet";
 
@@ -985,7 +1000,7 @@ function startInteraction() {
     }
 
     speak(
-      "Seid gegrüßt, mein Freund. Ich bin Friedrich Barbarossa, nach fast neunhundert Jahren im Kaiserberg zu Lautern erwacht. Was ist Euer Begehr?",
+      "Seid gegrüßt, mein Freund. Ich bin Friedrich Barbarossa, nach fast neunhundert Jahren im Kaiserberg zu Lautern erwacht. Was ist Euer Begehr? Nennt mir gern Euren edlen Namen. If you want, you can also ask in English.",
       false,
       "de",
       () => {
@@ -1001,6 +1016,7 @@ function startInteraction() {
   =============================== */
 
   if (STATE === "greet") {
+
     hideHint();
 
     STATE = "listen";
