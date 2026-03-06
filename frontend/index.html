@@ -756,7 +756,7 @@ function autoListenNextTurn(reason = "") {
 }
 /* -----------------------------
    STATE MACHINE – RECOGNITION
-   STABLE BASE VERSION
+   STABLE BASE VERSION + CONTINUOUS DIALOG
 ----------------------------- */
 
 let recognition = null;
@@ -788,6 +788,8 @@ function ensureRecognition() {
       if (!res) return;
 
       const clean = res.trim();
+      if (!clean) return;
+
       lastTranscript = clean;
 
       detectedLanguage =
@@ -812,7 +814,6 @@ function ensureRecognition() {
     };
 
     recognition.onend = () => {
-
       recRunning = false;
 
       if (STATE !== "listen") return;
@@ -834,6 +835,8 @@ function ensureRecognition() {
       hmNeigen = true;
       hmStartTime = performance.now();
 
+      const transcript = lastTranscript;
+
       const thinkPhrase =
         detectedLanguage === "en"
           ? "One moment, please."
@@ -841,7 +844,7 @@ function ensureRecognition() {
 
       speak(thinkPhrase, true, detectedLanguage);
 
-      console.log("📨 sende an /ask:", lastTranscript);
+      console.log("📨 sende an /ask:", transcript);
 
       fetch("/ask", {
         method: "POST",
@@ -849,52 +852,65 @@ function ensureRecognition() {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          text: lastTranscript,
+          text: transcript,
           lang: detectedLanguage,
           conversationId: CONV_ID || null
         })
       })
-      .then(r => r.json())
-      .then(data => {
+        .then(r => r.json())
+        .then(data => {
+          STATE = "answer";
 
-        STATE = "answer";
+          resetMovements();
 
-        resetMovements();
+          rising = true;
+          riseStartTime = performance.now();
 
-        rising = true;
-        riseStartTime = performance.now();
+          let answerLang = "de";
+          if (data && (data.answerLang === "de" || data.answerLang === "en")) {
+            answerLang = data.answerLang;
+          }
 
-        let answerLang = "de";
+          detectedLanguage = answerLang;
 
-        if (data && (data.answerLang === "de" || data.answerLang === "en")) {
-          answerLang = data.answerLang;
-        }
+          const answer =
+            data && data.answer
+              ? data.answer
+              : "Verzeiht, darauf weiß ich im Moment keine gute Antwort.";
 
-        detectedLanguage = answerLang;
+          console.log("✅ Antwort:", answer);
 
-        const answer =
-          data && data.answer
-            ? data.answer
-            : "Verzeiht, darauf weiß ich im Moment keine gute Antwort.";
+          speak(answer, false, answerLang, () => {
+            // ✅ Nach der Antwort direkt weiter zuhören
+            if (STATE !== "answer") return;
 
-        console.log("✅ Antwort:", answer);
+            lastTranscript = "";
+            heardSomething = false;
+            listeningFinished = false;
 
-        speak(answer, false, answerLang);
-      })
-      .catch(err => {
+            STATE = "listen";
 
-        console.warn("❌ /ask Fehler:", err);
+            setTimeout(() => {
+              if (STATE !== "listen") return;
+              if (talking || recRunning) return;
+              startRecognition();
+            }, 350);
+          });
+        })
+        .catch(err => {
+          console.warn("❌ /ask Fehler:", err);
 
-        STATE = "greet";
+          STATE = "greet";
 
-        speak(
-          "Verzeiht, es gab ein Problem bei meiner Antwort.",
-          false,
-          "de"
-        );
-
-        showHint("Kurz Knopf drücken, dann fragen");
-      });
+          speak(
+            "Verzeiht, es gab ein Problem bei meiner Antwort.",
+            false,
+            "de",
+            () => {
+              showHint("Kurz Knopf drücken, dann fragen");
+            }
+          );
+        });
     };
   }
 
@@ -906,7 +922,6 @@ function ensureRecognition() {
 ================================ */
 
 function startRecognition() {
-
   const r = ensureRecognition();
   if (!r) {
     alert("Spracherkennung wird von diesem Browser nicht unterstützt.");
@@ -936,7 +951,6 @@ function startRecognition() {
 const micBtn = document.getElementById("micBtn");
 
 if (micBtn) {
-
   micBtn.onclick = startInteraction;
 
   document.addEventListener("keydown", (e) => {
@@ -944,11 +958,9 @@ if (micBtn) {
     e.preventDefault();
     startInteraction();
   });
-
 }
 
 function startInteraction() {
-
   if (talking || recRunning) return;
 
   if (STATE === "think" || STATE === "answer") return;
@@ -958,7 +970,6 @@ function startInteraction() {
   =============================== */
 
   if (STATE === "idle" && !greeted) {
-
     greeted = true;
     STATE = "greet";
 
@@ -990,7 +1001,6 @@ function startInteraction() {
   =============================== */
 
   if (STATE === "greet") {
-
     hideHint();
 
     STATE = "listen";
