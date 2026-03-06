@@ -1026,39 +1026,36 @@ function ensureRecognition() {
                   _recSessionId++;
 
                   speak(answerText, false, answerLang, () => {
-                    try {
-                      _recAbortByUs = true;
-                      if (recognition) recognition.abort();
-                    } catch (e) {}
+                  try {
+                  _recAbortByUs = true;
+                  if (recognition) recognition.abort();
+                   } catch (e) {}
 
-                    recRunning = false;
-                    heardSomething = false;
-                    lastTranscript = "";
-                    listeningFinished = false;
-                    _awaitingServer = false;
-                    _noSpeechCount = 0;
+                   recRunning = false;
+                   heardSomething = false;
+                   lastTranscript = "";
+                   listeningFinished = false;
+                   _awaitingServer = false;
+                   _noSpeechCount = 0;
 
-                    greeted = false;
-                    STATE = "idle";
+                   try { SESSION_ACTIVE = false; } catch (e) {}
+                   try { CONV_ID = null; } catch (e) {}
 
-                    try { hideHint(); } catch (e) {}
-                    try { resetMovements(); } catch (e) {}
+                   try { hideHint(); } catch (e) {}
 
-                    try {
-                      hmNeigen = false;
-                      rising = false;
-                      frontalFix = false;
-                    } catch (e) {}
+        // Nicht hart springen – animate() soll ruhig zurückführen
+                   try {
+                   hmNeigen = false;
+                   rising = false;
+                   } catch (e) {}
 
-                    try {
-                      if (model) {
-                        model.position.y = baseY;
-                        model.rotation.x = baseRotX;
-                        model.rotation.y = baseRotY - Math.PI / 2;
-                      }
-                    } catch (e) {}
-                  });
-
+                  // Kurzer Moment Ruhe nach der Abschiedsantwort
+                  setTimeout(() => {
+                  greeted = false;
+                  frontalFix = false;
+                  STATE = "idle";
+                 }, 600);
+               });
                   return;
                 }
 
