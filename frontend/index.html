@@ -756,8 +756,9 @@ function autoListenNextTurn(reason = "") {
 }
 /* -----------------------------
    STATE MACHINE – RECOGNITION
-   MIT THINK-PHASE (WAKE-SICHER) – FIXED v4.1
+   MIT THINK-PHASE (WAKE-SICHER) – FIXED v4.1.1
    (SERVER DECIDES LANGUAGE, CLIENT SENDS lang AS FALLBACK)
+   + Gesprächsende aus server.js wird sauber übernommen
 ----------------------------- */
 
 let recognition = null;
@@ -771,7 +772,7 @@ let _recHandlersBound = false;
 let _recSessionId = 0;
 let _recAbortByUs = false;
 
-// ✅ NEU: Stabilitäts-Guards gegen Endlos-"no-speech"
+// ✅ Stabilitäts-Guards gegen Endlos-"no-speech"
 let _noSpeechCount = 0;
 let _listenArmedAt = 0;
 let _awaitingServer = false;
@@ -936,7 +937,7 @@ function ensureRecognition() {
           ? "Uhm....."
           : "Ähm ….";
 
-      // ✅ NEU: Think erst später, und nur wenn Request wirklich noch offen ist
+      // ✅ Think erst später, und nur wenn Request wirklich noch offen ist
       const THINK_DELAY_MS   = 1800;
       const MIN_THINK_GAP_MS = 450;
 
@@ -1009,6 +1010,17 @@ function ensureRecognition() {
                 // Engine-Hilfe aktualisieren (stabilisiert Folgeerkennung)
                 detectedLanguage = answerLang;
 
+                // ✅ Gesprächsende aus server.js übernehmen
+                const conversationEnded = !!(data && data.ended === true);
+
+                if (conversationEnded) {
+                  try { window._SESSION_ENDED = true; } catch (e) {}
+                  try { SESSION_ACTIVE = false; } catch (e) {}
+                  try { CONV_ID = null; } catch (e) {}
+                } else {
+                  try { window._SESSION_ENDED = false; } catch (e) {}
+                }
+
                 speak(data.answer, false, answerLang);
               }
             }, 120);
@@ -1039,6 +1051,7 @@ function ensureRecognition() {
 
   return recognition;
 }
+
 /* -----------------------------
    RECOGNITION STARTEN (MUSEUM-STABIL + DIALOG)
    Default: de-DE
