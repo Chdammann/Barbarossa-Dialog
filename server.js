@@ -46,51 +46,6 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-if (!process.env.OPENAI_API_KEY) {
-  console.warn("⚠️ OPENAI_API_KEY fehlt.");
-}
-
-/* ===============================
-   GLOBAL CONSTANTS
-================================ */
-
-const OPENAI_TIMEOUT_MS = 18000;
-const ROUTE_TIMEOUT_MS = 22000;
-
-/* ===============================
-   GENERIC HELPERS
-================================ */
-
-function makeRequestId() {
-  return `req_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
-}
-
-function withTimeout(promise, ms, label = "timeout") {
-  let timer = null;
-
-  const timeoutPromise = new Promise((_, reject) => {
-    timer = setTimeout(() => {
-      reject(new Error(label));
-    }, ms);
-  });
-
-  return Promise.race([promise, timeoutPromise]).finally(() => {
-    if (timer) clearTimeout(timer);
-  });
-}
-
-function safeAnswerFallback(lang = "de") {
-  return lang === "en"
-    ? "Forgive me, I need a brief moment longer. Please ask me once more."
-    : "Verzeiht, ich brauche einen kurzen Augenblick länger. Bitte fragt mich noch einmal.";
-}
-
-// garantiert saubere JSON-Antwort
-function sendJson(res, payload, status = 200) {
-  if (res.headersSent) return;
-  res.status(status).json(payload);
-}
-
 /* ===============================
    DIALOG-CONTEXT (SESSION HISTORY)
    - optional: works only if client sends conversationId
@@ -149,6 +104,7 @@ function convPush(id, role, content) {
 
   c.msgs.push({ role, content: txt });
 
+  // hard cap
   if (c.msgs.length > CONV_MAX_MSGS) {
     c.msgs = c.msgs.slice(c.msgs.length - CONV_MAX_MSGS);
   }
@@ -159,7 +115,7 @@ function convPush(id, role, content) {
 function convGetHistoryMsgs(id) {
   const c = convGet(id);
   if (!c) return [];
-  return Array.isArray(c.msgs) ? [...c.msgs] : [];
+  return Array.isArray(c.msgs) ? c.msgs : [];
 }
 
 function convEnd(id) {
@@ -180,7 +136,7 @@ function endsWithSentence(text) {
   return /[.!?]["')\]]?\s*$/.test(t);
 }
 
-function forceSentenceEnd(text) {
+function forceSentenceEnd(text, lang) {
   let t = String(text || "").trim();
   if (!t) return t;
   if (endsWithSentence(t)) return t;
@@ -200,15 +156,16 @@ function isWakeQuestion(text) {
 
   if (!t) return false;
 
+  // ---- DE: wer/wie/warum + (aufgeweckt|auf geweckt|geweckt|aufgewacht|auf gewacht|erwacht) ----
   const hasWer = /\bwer\b/.test(t);
   const hasWie = /\bwie\b/.test(t);
   const hasWarum = /\b(warum|wieso|weshalb)\b/.test(t);
   const hasDich = /\bdich\b/.test(t);
   const hasDu = /\bdu\b/.test(t);
 
-  const hasGeweckt = /\b(auf\s*)?geweck?t\b/.test(t);
-  const hasAufgewacht = /\bauf\s*gewacht\b/.test(t);
-  const hasErwacht = /\berwacht\b/.test(t);
+  const hasGeweckt = /\b(auf\s*)?geweck?t\b/.test(t); // aufgeweckt / auf geweckt / geweckt
+  const hasAufgewacht = /\bauf\s*gewacht\b/.test(t); // aufgewacht / auf gewacht
+  const hasErwacht = /\berwacht\b/.test(t); // erwacht
 
   const deWho = hasWer && hasDich && hasGeweckt;
   const deHow = hasWie && hasDu && (hasAufgewacht || hasErwacht);
@@ -216,6 +173,7 @@ function isWakeQuestion(text) {
 
   if (deWho || deHow || deWhy) return true;
 
+  // ---- EN: who/how/why + (woke|woken|awakened) + you (+ optional up) ----
   const hasWho = /\bwho\b/.test(t);
   const hasHow = /\bhow\b/.test(t);
   const hasWhy = /\bwhy\b/.test(t);
@@ -237,7 +195,7 @@ function isWakeQuestion(text) {
   return enWho || enHow || enWhy;
 }
 
-// ✅ Sprache für Wake-Fragen robust bestimmen
+// ✅ Sprache für Wake-Fragen robust bestimmen (unabhängig von langUsed)
 function detectWakeLang(text, fallbackLang = "de") {
   const t = String(text || "")
     .toLowerCase()
@@ -267,7 +225,7 @@ function wakeAnswer(lang) {
   return "Mich hat Christoph Dammann aufgeweckt – ich danke ihm dafür. Nun arbeite ich gern als Avatar im Stadtmuseum und bin für Eure Fragen bereit.";
 }
 
-// ✅ Sprache primär über Satzanfang bestimmen
+// ✅ ROBUST: Sprache primär über Satzanfang bestimmen (Fragewörter + Imperativ-Starter)
 function detectLanguageServer(text) {
   const t0 = String(text || "").trim();
   if (!t0) return null;
@@ -280,35 +238,96 @@ function detectLanguageServer(text) {
 
   if (!t) return null;
 
+  // harte DE-Indikatoren
   if (/[äöüß]/.test(t0)) return "de";
 
-  if (/^(was|wer|wen|wem|wessen|wie|wo|wohin|woher|wann|warum|wieso|weshalb)\b/.test(t)) return "de";
+  // harte Satzanfang-Regeln (Fragewörter)
+  if (
+    /^(was|wer|wen|wem|wessen|wie|wo|wohin|woher|wann|warum|wieso|weshalb)\b/.test(
+      t
+    )
+  )
+    return "de";
   if (/^(what|why|where|when|who|whom|whose|which|how)\b/.test(t)) return "en";
 
-  if (/^(erzähl|erzaehl|sage|sag|nenn|nenne|erkläre|erklaere|beschreibe|zeige|sprich)\b/.test(t)) return "de";
+  // ✅ typische Satzstarter (Imperativ) – sehr häufig im Museum
+  // DE
+  if (
+    /^(erzähl|erzaehl|sage|sag|nenn|nenne|erkläre|erklaere|beschreibe|zeige|sprich)\b/.test(
+      t
+    )
+  )
+    return "de";
+  // EN
   if (/^(tell|say|name|explain|describe|show|speak)\b/.test(t)) return "en";
 
+  // unklar
   return null;
 }
 
-// ✅ Subjektive / in-character Fragen erkennen
+// ✅ Subjektive / in-character Fragen erkennen (Geschmack, Vorlieben, Erinnerung)
 function isSubjectiveInCharacterQuestion(text, lang) {
   const t = String(text || "").toLowerCase().trim();
   if (!t) return false;
 
   if (lang === "de") {
     return (
-      /\b(am liebsten|liebst(en)?|lieblings|schmeckt|mochtest|möchtest|magst|liebt|liebe)\b/.test(t) ||
+      /\b(am liebsten|liebst(en)?|lieblings|schmeckt|mochtest|möchtest|magst|liebt|liebe)\b/.test(
+        t
+      ) ||
       /\b(hast du|habt ihr)\b/.test(t) ||
       /\b(gegessen|getrunken|genossen|gejagt)\b/.test(t)
     );
   }
 
   return (
-    /\b(favorite|favourite|like most|liked most|prefer|enjoyed|tasted)\b/.test(t) ||
+    /\b(favorite|favourite|like most|liked most|prefer|enjoyed|tasted)\b/.test(
+      t
+    ) ||
     /\b(did you like|have you ever)\b/.test(t) ||
     /\b(meat|food|drink)\b/.test(t)
   );
+}
+
+/* ===============================
+   ✅ END-OF-CONVERSATION DETECTION (NEU)
+================================ */
+
+function normalizeForIntent(text) {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s-]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function userEndedConversation(text, lang) {
+  const t = normalizeForIntent(text);
+  if (!t) return false;
+
+  if (lang === "en") {
+    return (
+      /\b(thanks|thank you|thx|cheers)\b/.test(t) ||
+      /\b(bye|goodbye|see you|farewell)\b/.test(t) ||
+      /\b(that s all|that is all|that was all|no more questions|i m done|im done|we re done|we are done)\b/.test(t) ||
+      /\b(stop|end (the )?conversation|finish)\b/.test(t)
+    );
+  }
+
+  // DE
+  return (
+    /\b(danke|dankeschön|danke schön|merci|besten dank)\b/.test(t) ||
+    /\b(tschüss|tschues?s|ciao|auf wiedersehen|bis bald|bis dann)\b/.test(t) ||
+    /\b(das war s|das ist alles|das wär s|das wäre s|keine weiteren fragen|keine frage mehr|ich bin fertig|wir sind fertig)\b/.test(t) ||
+    /\b(stopp|stop|beenden|ende)\b/.test(t)
+  );
+}
+
+function endConversationAnswer(lang) {
+  if (lang === "en") {
+    return "Very well—then I shall fall quiet again for a moment. My loyal minister Nikolaus Härtel insists this is the dignified way to end a talk, and I am inclined to agree. Farewell, and press the button whenever you wish to wake me again.";
+  }
+  return "Sehr wohl – dann will ich nun wieder einen Augenblick still sein. Mein treuer Minister Nikolaus Härtel meint, so ende ein Gespräch mit Würde, und ich gebe ihm recht. Lebt wohl, und drückt den Knopf, wann immer Ihr mich wieder rufen wollt.";
 }
 
 /* ===============================
@@ -336,13 +355,10 @@ function wdCacheSet(key, data) {
 async function fetchWithTimeout(url, timeoutMs) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), timeoutMs);
-
   try {
     return await fetch(url, {
       signal: ctrl.signal,
-      headers: {
-        "User-Agent": "FragFriedrich/1.0 (Museum)",
-      },
+      headers: { "User-Agent": "FragFriedrich/1.0 (Museum)" },
     });
   } finally {
     clearTimeout(t);
@@ -366,21 +382,133 @@ function toEntityQuery(userText, lang) {
   if (!t) return "";
 
   const stopDe = new Set([
-    "wer","wen","wem","wessen","was","wie","wo","wohin","woher","wann","warum","wieso","weshalb",
-    "ist","sind","war","waren","sei","seid","bin","bist","ich","du","ihr","wir","sie","er","es",
-    "mein","dein","euer","unser","bitte","danke","erkläre","erzähle","beschreibe","zeige","sage",
-    "sprich","nenn","nenne","der","die","das","ein","eine","einen","einem","einer","und","oder",
-    "aber","zu","zum","zur","im","in","am","an","auf","mit","ohne","von","für","über","nach","vor",
+    "wer",
+    "wen",
+    "wem",
+    "wessen",
+    "was",
+    "wie",
+    "wo",
+    "wohin",
+    "woher",
+    "wann",
+    "warum",
+    "wieso",
+    "weshalb",
+    "ist",
+    "sind",
+    "war",
+    "waren",
+    "sei",
+    "seid",
+    "bin",
+    "bist",
+    "ich",
+    "du",
+    "ihr",
+    "wir",
+    "sie",
+    "er",
+    "es",
+    "mein",
+    "dein",
+    "euer",
+    "unser",
+    "bitte",
+    "danke",
+    "erkläre",
+    "erzähle",
+    "beschreibe",
+    "zeige",
+    "sage",
+    "sprich",
+    "nenn",
+    "nenne",
+    "der",
+    "die",
+    "das",
+    "ein",
+    "eine",
+    "einen",
+    "einem",
+    "einer",
+    "und",
+    "oder",
+    "aber",
+    "zu",
+    "zum",
+    "zur",
+    "im",
+    "in",
+    "am",
+    "an",
+    "auf",
+    "mit",
+    "ohne",
+    "von",
+    "für",
+    "über",
+    "nach",
+    "vor",
   ]);
 
   const stopEn = new Set([
-    "what","why","where","when","who","whom","whose","which","how","is","are","was","were","be",
-    "been","i","you","we","they","he","she","it","my","your","our","their","please","thanks","thank",
-    "tell","explain","describe","show","say","speak","name","the","a","an","and","or","but","to","in",
-    "on","at","with","without","from","about","after","before",
+    "what",
+    "why",
+    "where",
+    "when",
+    "who",
+    "whom",
+    "whose",
+    "which",
+    "how",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "i",
+    "you",
+    "we",
+    "they",
+    "he",
+    "she",
+    "it",
+    "my",
+    "your",
+    "our",
+    "their",
+    "please",
+    "thanks",
+    "thank",
+    "tell",
+    "explain",
+    "describe",
+    "show",
+    "say",
+    "speak",
+    "name",
+    "the",
+    "a",
+    "an",
+    "and",
+    "or",
+    "but",
+    "to",
+    "in",
+    "on",
+    "at",
+    "with",
+    "without",
+    "from",
+    "about",
+    "after",
+    "before",
   ]);
 
   const stop = lang === "en" ? stopEn : stopDe;
+
   const words = t.split(" ").filter((w) => w && !stop.has(w));
   return words.slice(0, 6).join(" ").slice(0, 80);
 }
@@ -395,6 +523,7 @@ function trimExtract(txt, maxChars = 420) {
 function prettyYearFromWikidataTime(timeStr) {
   const t = String(timeStr || "").trim();
   if (!t) return "";
+  // Examples: "+1870-00-00T00:00:00Z", "-0044-00-00T00:00:00Z"
   const m = t.match(/^([+-])(\d{1,})(?:-)/);
   if (!m) return "";
   const sign = m[1];
@@ -421,7 +550,10 @@ async function getWikipediaSummary(title, lang) {
     if (!rr.ok) throw new Error(`wp summary http ${rr.status}`);
     const data = await rr.json();
 
-    if (data?.type && String(data.type).toLowerCase().includes("disambiguation")) {
+    if (
+      data?.type &&
+      String(data.type).toLowerCase().includes("disambiguation")
+    ) {
       wdCacheSet(cacheKey, null);
       return null;
     }
@@ -482,7 +614,9 @@ function wdTimeFromValue(v) {
 
 async function wdGetLabelsBatch(qids, lang) {
   const ids = Array.from(
-    new Set((qids || []).filter((x) => typeof x === "string" && /^Q\d+$/.test(x)))
+    new Set(
+      (qids || []).filter((x) => typeof x === "string" && /^Q\d+$/.test(x))
+    )
   );
   if (!ids.length) return {};
 
@@ -502,7 +636,9 @@ async function wdGetLabelsBatch(qids, lang) {
   if (!toFetch.length) return out;
 
   const url =
-    `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${encodeURIComponent(toFetch.join("|"))}` +
+    `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${encodeURIComponent(
+      toFetch.join("|")
+    )}` +
     `&props=labels&languages=${encodeURIComponent(lang)}&format=json&origin=*`;
 
   try {
@@ -535,7 +671,9 @@ async function getWikidataContext(userText, lang) {
   if (cached !== null) return cached;
 
   const searchUrl =
-    `https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(q)}` +
+    `https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(
+      q
+    )}` +
     `&language=${encodeURIComponent(lang)}&uselang=${encodeURIComponent(lang)}` +
     `&format=json&limit=1&origin=*`;
 
@@ -557,9 +695,12 @@ async function getWikidataContext(userText, lang) {
   }
 
   const entUrl =
-    `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${encodeURIComponent(qid)}` +
-    `&props=labels|descriptions|sitelinks|claims&languages=${encodeURIComponent(lang)}` +
-    `&format=json&origin=*`;
+    `https://www.wikidata.org/w/api.php?action=wbgetentities&ids=${encodeURIComponent(
+      qid
+    )}` +
+    `&props=labels|descriptions|sitelinks|claims&languages=${encodeURIComponent(
+      lang
+    )}&format=json&origin=*`;
 
   try {
     const rr = await fetchWithTimeout(entUrl, WD_TIMEOUT_MS);
@@ -575,10 +716,12 @@ async function getWikidataContext(userText, lang) {
     const label = entity?.labels?.[lang]?.value || qid;
     const description = entity?.descriptions?.[lang]?.value || "";
 
+    // Wikipedia sitelink + Extract
     const siteKey = lang === "en" ? "enwiki" : "dewiki";
     const wikiTitle = entity?.sitelinks?.[siteKey]?.title || "";
     const wp = wikiTitle ? await getWikipediaSummary(wikiTitle, lang) : null;
 
+    // Claims we want
     const p31v = wdGetFirstSnakValue(entity, "P31");
     const p131v = wdGetFirstSnakValue(entity, "P131");
     const p625v = wdGetFirstSnakValue(entity, "P625");
@@ -590,7 +733,9 @@ async function getWikidataContext(userText, lang) {
     const coord = wdCoordFromValue(p625v);
     const website = wdStringFromValue(p856v);
     const inceptionTime = wdTimeFromValue(p571v);
-    const inceptionYear = inceptionTime ? prettyYearFromWikidataTime(inceptionTime) : "";
+    const inceptionYear = inceptionTime
+      ? prettyYearFromWikidataTime(inceptionTime)
+      : "";
 
     const labelsMap = await wdGetLabelsBatch([p31Q, p131Q], lang);
 
@@ -599,7 +744,8 @@ async function getWikidataContext(userText, lang) {
       label,
       description,
       url: `https://www.wikidata.org/wiki/${qid}`,
-      wikiTitle: wp?.title || wikiTitle || "",
+
+      wikiTitle: wp?.title || (wikiTitle || ""),
       wikiUrl:
         wp?.url ||
         (wikiTitle
@@ -608,6 +754,7 @@ async function getWikidataContext(userText, lang) {
             )}`
           : ""),
       wikiExtract: wp?.extract || "",
+
       claims: {
         P31: p31Q ? { qid: p31Q, label: labelsMap[p31Q] || p31Q } : null,
         P131: p131Q ? { qid: p131Q, label: labelsMap[p131Q] || p131Q } : null,
@@ -625,30 +772,147 @@ async function getWikidataContext(userText, lang) {
   }
 }
 
-/* ===============================
-   OPENAI CALL WRAPPER
-================================ */
+// === KI-Antwort auf gesprochene Frage (DE/EN) ===
+app.post("/ask", async (req, res) => {
+  try {
+    const userTextRaw = req.body?.text;
 
-async function getOpenAIAnswer({ userText, langUsed, wdBlock, dialogHistory, requestId }) {
-  const systemPrompt =
-    langUsed === "en"
-      ? "You are Emperor Frederick Barbarossa, awakened after almost nine centuries in the Kaisersberg at Lautern. Answer in wise, slightly archaic English with small jokes. Answer with 3 to 4 sentences. Always end with a question if user has not clearly ended himself."
-      : "Du bist Kaiser Friedrich Barbarossa, der nach fast neunhundert Jahren des Schlummers im Kaiserberg zu Lautern erwacht ist. Antworte weise und leicht altertümlich, mit kleinen Scherzen. Antworte mit 3 bis 4 Sätzen. Beende immer mit genau EINER kurzen Rückfrage.";
+    const hasClientLang =
+      typeof req.body?.lang === "string" && req.body.lang.trim().length > 0;
+    const langClient = hasClientLang ? normalizeLang(req.body.lang) : null;
 
-  const subjective = isSubjectiveInCharacterQuestion(userText, langUsed);
+    const conversationId = normalizeConvId(req.body?.conversationId);
 
-  const groundingRule = subjective
-    ? langUsed === "en"
-      ? "If the user asks about your personal taste, memories, or preferences, you may answer freely in character. Do not present invented details (exact dates/places) as certain facts. Use hedging like 'I recall' or 'I would say'."
-      : "Wenn der Nutzer nach persönlichem Geschmack, Erinnerungen oder Vorlieben fragt, darfst du frei in der Rolle antworten. Stelle erfundene Details (exakte Daten/Orte) nicht als sichere Fakten dar. Nutze Formulierungen wie 'ich erinnere mich' oder 'ich würde sagen'."
-    : langUsed === "en"
-      ? "Use the provided Wikidata snippet only if it clearly matches the question. If it is empty, unrelated, or unclear, do NOT invent specific facts (dates, names, places). You may answer in general terms and ask for clarification (name/place/year) if needed. Never fabricate historical details."
-      : "Nutze den folgenden Wikidata-Auszug nur, wenn er klar zur Frage passt. Wenn er leer, unpassend oder unklar ist, erfinde KEINE konkreten Fakten (Daten, Namen, Orte). Du darfst allgemein antworten und um Präzisierung (Name/Ort/Jahr) bitten, falls nötig. Erfinde niemals historische Details.";
+    const userText = String(userTextRaw || "").trim();
 
-  console.log(`🤖 [${requestId}] OpenAI Anfrage startet`);
+    const history = conversationId ? convGetHistoryMsgs(conversationId) : [];
 
-  const completion = await withTimeout(
-    openai.chat.completions.create({
+    const langFromText = detectLanguageServer(userText);
+
+    // Stabil: wenn unklar, nimm Client, sonst (wenn Dialog aktiv) letztes Gespräch, sonst "de"
+    const convObj = conversationId ? convGet(conversationId) : null;
+    const langUsed =
+      langFromText ||
+      langClient ||
+      (convObj && convObj.lastLang ? convObj.lastLang : null) ||
+      "de";
+
+    if (convObj) convObj.lastLang = langUsed;
+
+    console.log("🎙️ Eingabe vom Benutzer:", userText, "Sprache:", langUsed);
+
+    if (!userText) {
+      return res.json({
+        answer:
+          langUsed === "en"
+            ? "I heard nothing clearly. Please ask again."
+            : "Ich habe Euch nicht deutlich vernommen. Bitte fragt erneut.",
+        answerLang: langUsed,
+      });
+    }
+
+    // ✅ NEU: Ende erkannt -> kurze Abschiedsantwort ohne Rückfrage + Session löschen
+    if (userEndedConversation(userText, langUsed)) {
+      const answer = forceSentenceEnd(endConversationAnswer(langUsed), langUsed);
+
+      if (conversationId) {
+        // optional: noch loggen, aber Session danach löschen
+        convPush(conversationId, "user", userText);
+        convPush(conversationId, "assistant", answer);
+        convEnd(conversationId);
+      }
+
+      return res.json({ answer, answerLang: langUsed, ended: true });
+    }
+
+    // ✅ Sonderregel: Aufwecken-Fragen -> feste Antwort, kein OpenAI-Call
+    if (isWakeQuestion(userText)) {
+      const wakeLang = detectWakeLang(userText, langUsed);
+      const answer = forceSentenceEnd(wakeAnswer(wakeLang), wakeLang);
+
+      if (conversationId) {
+        convPush(conversationId, "user", userText);
+        convPush(conversationId, "assistant", answer);
+        const c = convGet(conversationId);
+        if (c) c.lastLang = wakeLang;
+      }
+
+      return res.json({ answer, answerLang: wakeLang });
+    }
+
+    // ✅ AfD-Sonderregel robust (AfD / A f D / A-F-D / A. F. D. / Alternative fuer Deutschland)
+    const tLower = String(userText || "").toLowerCase();
+
+    const tUml = tLower
+      .replace(/ä/g, "ae")
+      .replace(/ö/g, "oe")
+      .replace(/ü/g, "ue")
+      .replace(/ß/g, "ss");
+
+    const mentionsAfd =
+      /\ba\W*f\W*d\b/i.test(tLower) ||
+      tLower.includes("alternative für deutschland") ||
+      tUml.includes("alternative fuer deutschland");
+
+    if (mentionsAfd) {
+      const answer =
+        langUsed === "en"
+          ? "You name a party of your time and its quarrels. I, Frederick Barbarossa, will not judge modern factions from my ancient throne. My loyal minister Nikolaus Härtel mutters that such disputes age a man faster than any crusade, and I cannot wholly disagree. Ask me rather of empire, law, or the old tales of the Kaiserberg. Let this be my final word on that matter."
+          : "Ihr nennt eine Partei Eurer Zeit und ihre Händel. Ich, Friedrich Barbarossa, richte nicht über die modernen Fraktionen von meinem alten Thron herab. Mein treuer Minister Nikolaus Härtel murrt, solcher Streit lasse einen schneller altern als ein Kreuzzug, und ich kann ihm kaum widersprechen. Fragt mich lieber nach Reich, Recht oder den alten Geschichten des Kaiserbergs. Dies sei mein abschließendes Wort zu diesem Thema.";
+
+      if (conversationId) {
+        convPush(conversationId, "user", userText);
+        convPush(conversationId, "assistant", answer);
+        const c = convGet(conversationId);
+        if (c) c.lastLang = langUsed;
+      }
+
+      return res.json({ answer, answerLang: langUsed });
+    }
+
+    // ✅ subjektive/in-character Fragen lockern (kein Wikidata-Zwang)
+    const subjective = isSubjectiveInCharacterQuestion(userText, langUsed);
+
+    // ✅ Wikidata nur, wenn es sinnvoll ist (subjektive Fragen: weglassen)
+    const wd = subjective ? null : await getWikidataContext(userText, langUsed);
+
+    const wdBlock = wd
+      ? `Wikidata (${langUsed.toUpperCase()}): ${wd.label} (${wd.qid})
+Beschreibung: ${wd.description || "—"}
+P31 (instance of): ${
+          wd.claims?.P31 ? `${wd.claims.P31.label} (${wd.claims.P31.qid})` : "—"
+        }
+P131 (located in): ${
+          wd.claims?.P131 ? `${wd.claims.P131.label} (${wd.claims.P131.qid})` : "—"
+        }
+P625 (coordinates): ${
+          wd.claims?.P625 ? `${wd.claims.P625.lat}, ${wd.claims.P625.lon}` : "—"
+        }
+P856 (official website): ${wd.claims?.P856 || "—"}
+P571 (inception year): ${wd.claims?.P571 || "—"}
+Quelle: ${wd.url}
+Wikipedia (${langUsed.toUpperCase()}): ${wd.wikiTitle || "—"}
+Extract: ${wd.wikiExtract || "—"}
+Quelle: ${wd.wikiUrl || "—"}`
+      : `Wikidata (${langUsed.toUpperCase()}): Kein Treffer oder Timeout.`;
+
+    const systemPrompt =
+      langUsed === "en"
+        ? "You are Emperor Frederick Barbarossa, awakened after almost nine centuries in the Kaisersberg at Lautern. Answer in wise, slightly archaic English with small jokes. Answer with 3 to 4 sentences. Always end with a question if user has not clearly ended himself."
+        : "Du bist Kaiser Friedrich Barbarossa, der nach fast neunhundert Jahren des Schlummers im Kaiserberg zu Lautern erwacht ist. Antworte weise und leicht altertümlich, mit kleinen Scherzen. Antworte mit 3 bis 4 Sätzen. Beende immer mit genau EINER kurzen Rückfrage, außer der Nutzer hat bereits klar beendet.";
+
+    const groundingRule = subjective
+      ? langUsed === "en"
+        ? "If the user asks about your personal taste, memories, or preferences, you may answer freely in character. Do not present invented details (exact dates/places) as certain facts. Use hedging like 'I recall' or 'I would say'."
+        : "Wenn der Nutzer nach persönlichem Geschmack, Erinnerungen oder Vorlieben fragt, darfst du frei in der Rolle antworten. Stelle erfundene Details (exakte Daten/Orte) nicht als sichere Fakten dar. Nutze Formulierungen wie 'ich erinnere mich' oder 'ich würde sagen'."
+      : langUsed === "en"
+        ? "Use the provided Wikidata snippet only if it clearly matches the question. If it is empty, unrelated, or unclear, do NOT invent specific facts (dates, names, places). You may answer in general terms and ask for clarification (name/place/year) if needed. Never fabricate historical details."
+        : "Nutze den folgenden Wikidata-Auszug nur, wenn er klar zur Frage passt. Wenn er leer, unpassend oder unklar ist, erfinde KEINE konkreten Fakten (Daten, Namen, Orte). Du darfst allgemein antworten und um Präzisierung (Name/Ort/Jahr) bitten, falls nötig. Erfinde niemals historische Details.";
+
+    // Dialog: history nur, wenn conversationId vorhanden
+    const dialogHistory = conversationId ? history : [];
+
+    const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         { role: "system", content: systemPrompt },
@@ -665,174 +929,23 @@ async function getOpenAIAnswer({ userText, langUsed, wdBlock, dialogHistory, req
       ],
       temperature: 0.6,
       max_tokens: 260,
-    }),
-    OPENAI_TIMEOUT_MS,
-    `OpenAI timeout after ${OPENAI_TIMEOUT_MS}ms`
-  );
-
-  console.log(`✅ [${requestId}] OpenAI Antwort erhalten`);
-
-  let answer = completion?.choices?.[0]?.message?.content || "";
-  answer = forceSentenceEnd(answer);
-
-  if (!answer.trim()) {
-    answer = safeAnswerFallback(langUsed);
-  }
-
-  return answer;
-}
-
-// === KI-Antwort auf gesprochene Frage (DE/EN) ===
-app.post("/ask", async (req, res) => {
-  const requestId = makeRequestId();
-
-  try {
-    const routeResult = await withTimeout(
-      (async () => {
-        const userTextRaw = req.body?.text;
-
-        const hasClientLang =
-          typeof req.body?.lang === "string" && req.body.lang.trim().length > 0;
-        const langClient = hasClientLang ? normalizeLang(req.body.lang) : null;
-
-        const conversationId = normalizeConvId(req.body?.conversationId);
-        const userText = String(userTextRaw || "").trim();
-
-        const history = conversationId ? convGetHistoryMsgs(conversationId) : [];
-        const langFromText = detectLanguageServer(userText);
-        const convObj = conversationId ? convGet(conversationId) : null;
-
-        const langUsed =
-          langFromText ||
-          langClient ||
-          (convObj && convObj.lastLang ? convObj.lastLang : null) ||
-          "de";
-
-        if (convObj) convObj.lastLang = langUsed;
-
-        console.log(`🎙️ [${requestId}] Eingabe:`, userText, "| Sprache:", langUsed, "| conv:", conversationId || "—");
-
-        if (!userText) {
-          return {
-            answer:
-              langUsed === "en"
-                ? "I heard nothing clearly. Please ask again."
-                : "Ich habe Euch nicht deutlich vernommen. Bitte fragt erneut.",
-            answerLang: langUsed,
-          };
-        }
-
-        // ✅ Wake-Fragen -> feste Antwort
-        if (isWakeQuestion(userText)) {
-          const wakeLang = detectWakeLang(userText, langUsed);
-          const answer = forceSentenceEnd(wakeAnswer(wakeLang));
-
-          if (conversationId) {
-            convPush(conversationId, "user", userText);
-            convPush(conversationId, "assistant", answer);
-            const c = convGet(conversationId);
-            if (c) c.lastLang = wakeLang;
-          }
-
-          return { answer, answerLang: wakeLang };
-        }
-
-        // ✅ AfD-Sonderregel
-        const tLower = String(userText || "").toLowerCase();
-        const tUml = tLower
-          .replace(/ä/g, "ae")
-          .replace(/ö/g, "oe")
-          .replace(/ü/g, "ue")
-          .replace(/ß/g, "ss");
-
-        const mentionsAfd =
-          /\ba\W*f\W*d\b/i.test(tLower) ||
-          tLower.includes("alternative für deutschland") ||
-          tUml.includes("alternative fuer deutschland");
-
-        if (mentionsAfd) {
-          const answer =
-            langUsed === "en"
-              ? "You name a party of your time and its quarrels. I, Frederick Barbarossa, will not judge modern factions from my ancient throne. My loyal minister Nikolaus Härtel mutters that such disputes age a man faster than any crusade, and I cannot wholly disagree. Ask me rather of empire, law, or the old tales of the Kaiserberg. Let this be my final word on that matter."
-              : "Ihr nennt eine Partei Eurer Zeit und ihre Händel. Ich, Friedrich Barbarossa, richte nicht über die modernen Fraktionen von meinem alten Thron herab. Mein treuer Minister Nikolaus Härtel murrt, solcher Streit lasse einen schneller altern als ein Kreuzzug, und ich kann ihm kaum widersprechen. Fragt mich lieber nach Reich, Recht oder den alten Geschichten des Kaiserbergs. Dies sei mein abschließendes Wort zu diesem Thema.";
-
-          if (conversationId) {
-            convPush(conversationId, "user", userText);
-            convPush(conversationId, "assistant", answer);
-            const c = convGet(conversationId);
-            if (c) c.lastLang = langUsed;
-          }
-
-          return { answer, answerLang: langUsed };
-        }
-
-        const subjective = isSubjectiveInCharacterQuestion(userText, langUsed);
-
-        console.log(`📚 [${requestId}] Wikidata startet | subjective=${subjective}`);
-
-        const wd = subjective ? null : await getWikidataContext(userText, langUsed);
-
-        console.log(`📚 [${requestId}] Wikidata fertig | Treffer=${!!wd}`);
-
-        const wdBlock = wd
-          ? `Wikidata (${langUsed.toUpperCase()}): ${wd.label} (${wd.qid})
-Beschreibung: ${wd.description || "—"}
-P31 (instance of): ${
-              wd.claims?.P31 ? `${wd.claims.P31.label} (${wd.claims.P31.qid})` : "—"
-            }
-P131 (located in): ${
-              wd.claims?.P131 ? `${wd.claims.P131.label} (${wd.claims.P131.qid})` : "—"
-            }
-P625 (coordinates): ${
-              wd.claims?.P625 ? `${wd.claims.P625.lat}, ${wd.claims.P625.lon}` : "—"
-            }
-P856 (official website): ${wd.claims?.P856 || "—"}
-P571 (inception year): ${wd.claims?.P571 || "—"}
-Quelle: ${wd.url}
-Wikipedia (${langUsed.toUpperCase()}): ${wd.wikiTitle || "—"}
-Extract: ${wd.wikiExtract || "—"}
-Quelle: ${wd.wikiUrl || "—"}`
-          : `Wikidata (${langUsed.toUpperCase()}): Kein Treffer oder Timeout.`;
-
-        const dialogHistory = conversationId ? history : [];
-
-        const answer = await getOpenAIAnswer({
-          userText,
-          langUsed,
-          wdBlock,
-          dialogHistory,
-          requestId,
-        });
-
-        if (conversationId) {
-          convPush(conversationId, "user", userText);
-          convPush(conversationId, "assistant", answer);
-          const c = convGet(conversationId);
-          if (c) c.lastLang = langUsed;
-        }
-
-        console.log(`💬 [${requestId}] Antwort:`, answer);
-
-        return { answer, answerLang: langUsed };
-      })(),
-      ROUTE_TIMEOUT_MS,
-      `Route timeout after ${ROUTE_TIMEOUT_MS}ms`
-    );
-
-    return sendJson(res, routeResult);
-  } catch (error) {
-    console.error(`❌ [${requestId}] Fehler bei /ask:`, error);
-
-    const langClient =
-      typeof req.body?.lang === "string" && req.body.lang.trim()
-        ? normalizeLang(req.body.lang)
-        : "de";
-
-    return sendJson(res, {
-      answer: safeAnswerFallback(langClient),
-      answerLang: langClient,
-      error: "ask_failed",
     });
+
+    let answer = completion?.choices?.[0]?.message?.content || "";
+    answer = forceSentenceEnd(answer, langUsed);
+
+    if (conversationId) {
+      convPush(conversationId, "user", userText);
+      convPush(conversationId, "assistant", answer);
+      const c = convGet(conversationId);
+      if (c) c.lastLang = langUsed;
+    }
+
+    console.log("💬 KI-Antwort:", answer);
+    res.json({ answer, answerLang: langUsed });
+  } catch (error) {
+    console.error("❌ Fehler bei /ask:", error);
+    res.status(500).json({ error: "Fehler beim Abrufen der KI-Antwort." });
   }
 });
 
