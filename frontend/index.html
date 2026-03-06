@@ -756,10 +756,9 @@ function autoListenNextTurn(reason = "") {
 }
 /* -----------------------------
    STATE MACHINE – RECOGNITION
-   MIT THINK-PHASE (WAKE-SICHER) – FIXED v4.3
+   MIT THINK-PHASE (WAKE-SICHER) – FIXED v4.3-clean
    (SERVER DECIDES LANGUAGE, CLIENT SENDS lang AS FALLBACK)
-   + ✅ Gespräch beenden: Stop Listening + Reset auf Startzustand
-   + ✅ kein Hängenbleiben nach Aufnahme
+   + Gesprächsende-Logik entfernt
 ----------------------------- */
 
 let recognition = null;
@@ -795,100 +794,6 @@ function _safeGet(name, fallback = undefined) {
   } catch (e) {
     return fallback;
   }
-}
-
-/* ===============================
-   Gespräch beenden
-================================ */
-function _normalizeTextForEndIntent(s) {
-  return String(s || "")
-    .toLowerCase()
-    .trim()
-    .replace(/[“”„"']/g, "")
-    .replace(/[^\p{L}\p{N}\s-]/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function isEndConversationIntent(text) {
-  const t = _normalizeTextForEndIntent(text);
-  if (!t) return false;
-
-  const de =
-    (t.includes("gespräch") || t.includes("gespraech")) &&
-    (
-      t.includes("ist beendet") ||
-      t.includes("beendet") ||
-      t.includes("zu ende") ||
-      t.includes("vorbei")
-    );
-
-  const en =
-    (t.includes("conversation") || t.includes("talk") || t.includes("chat")) &&
-    (
-      t.includes("is over") ||
-      t.includes("over") ||
-      t.includes("ended") ||
-      t.includes("finished") ||
-      t.includes("is finished")
-    );
-
-  return !!(de || en);
-}
-
-function endConversation(reason = "user", langHint = "de") {
-  try { console.log("🛑 Gespräch beendet:", reason); } catch (e) {}
-
-  _recSessionId++;
-  _awaitingServer = false;
-  _noSpeechCount = 0;
-  _listenArmedAt = 0;
-  heardSomething = false;
-
-  _safeSet("SESSION_ACTIVE", false);
-  _safeSet("CONV_ID", null);
-  _safeSet("SESSION_LAST_TS", Date.now());
-
-  _safeSet("lastTranscript", "");
-  _safeSet("listeningFinished", false);
-
-  try {
-    _recAbortByUs = true;
-    if (recognition) recognition.abort();
-  } catch (e) {}
-
-  _safeSet("recRunning", false);
-  _safeSet("greeted", false);
-  _safeSet("STATE", "idle");
-
-  try { resetMovements(); } catch (e) {}
-  try {
-    hmNeigen = false;
-    rising = false;
-  } catch (e) {}
-
-  try {
-    if (typeof model !== "undefined" && model) {
-      model.position.y = baseY;
-      model.rotation.x = baseRotX;
-      model.rotation.y = baseRotY - Math.PI / 2;
-    }
-  } catch (e) {}
-
-  try { hideHint(); } catch (e) {}
-
-  const finalDe = "Verehrter Bürger der Neuzeit, ich danke für unseren anregenden Austausch.";
-  const finalEn = "Honoured citizen of this modern age, I thank thee for our stirring exchange.";
-  const finalText = (langHint === "en") ? finalEn : finalDe;
-
-  try {
-    if (!_safeGet("talking", false)) {
-      speak(finalText, false, (langHint === "en") ? "en" : "de", () => {
-        try { hideHint(); } catch (e) {}
-        _safeSet("STATE", "idle");
-      });
-    }
-  } catch (e) {}
 }
 
 /* ===============================
@@ -934,11 +839,6 @@ function ensureRecognition() {
       _noSpeechCount = 0;
 
       try { console.log("📝 onresult:", clean); } catch (e) {}
-
-      if (isEndConversationIntent(clean)) {
-        endConversation("intent-detected", detectedLanguage);
-        return;
-      }
     };
 
     recognition.onerror = (e) => {
@@ -1028,13 +928,7 @@ function ensureRecognition() {
         return;
       }
 
-      // ===== 2) ENDE-INTENT =====
-      if (isEndConversationIntent(transcript)) {
-        endConversation("intent-onend", detectedLanguage);
-        return;
-      }
-
-      // ===== 3) ETWAS GEHÖRT → THINK + FETCH =====
+      // ===== 2) ETWAS GEHÖRT → THINK + FETCH =====
       _safeSet("STATE", "think");
       _awaitingServer = true;
 
@@ -1244,9 +1138,10 @@ function startRecognition() {
     }, 250);
   }
 }
+
 /* -----------------------------
    BUTTON + ENTER – GREET & LISTEN
-   STABIL – FIXED v3.3 (NO LISTEN RACE / REVIEWED)
+   STABIL – FIXED v3.3-clean
 ----------------------------- */
 
 const micBtn = document.getElementById("micBtn");
@@ -1263,7 +1158,7 @@ if (!micBtn) {
     // Enter im Capture-Mode → kann nicht geschluckt werden
     document.addEventListener("keydown", (e) => {
       if (e.key !== "Enter") return;
-      if (e.repeat) return; // 🔒 verhindert "Enter gehalten" / Prellen
+      if (e.repeat) return;
       e.preventDefault();
       e.stopPropagation();
       startInteraction();
@@ -1272,9 +1167,6 @@ if (!micBtn) {
 
   /* ===============================
      🔧 RESYNC: nur harmlose Desyncs heilen
-     WICHTIG:
-     - KEIN STATE-Umbiegen während listen
-     - KEIN listen-start-guard mehr
   ================================ */
   let _lastHealAt = 0;
 
@@ -1458,10 +1350,6 @@ if (!micBtn) {
       STATE = "listen";
 
       startRecognition();
-
-      // ✅ KEIN zusätzlicher Fallback-Timer hier
-      // Der Recognition-Block steuert alleine,
-      // ob bei Stille weitergehört oder auf greet zurückgegangen wird.
 
       return;
     }
