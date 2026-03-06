@@ -757,7 +757,10 @@ function autoListenNextTurn(reason = "") {
 /* -----------------------------
    STATE MACHINE – RECOGNITION
    STABLE BASE VERSION + CONTINUOUS DIALOG
-   MINIMAL FIX: nach Antwort wieder zuhören
+   FIX:
+   - Think-Phrase nicht mehr abgeschnitten
+   - Antwort / Rückfrage / Zuhören frontal
+   - nach Antwort wieder zuhören
 ----------------------------- */
 
 let recognition = null;
@@ -833,6 +836,10 @@ function ensureRecognition() {
 
       resetMovements();
 
+      // THINK darf leicht aus der Frontalität heraus,
+      // aber danach bei Antwort / Zuhören wieder frontal.
+      frontalFix = false;
+
       hmNeigen = true;
       hmStartTime = performance.now();
 
@@ -843,11 +850,9 @@ function ensureRecognition() {
           ? "One moment, please."
           : "Ähm … einen Moment bitte.";
 
-      speak(thinkPhrase, true, detectedLanguage);
-
       console.log("📨 sende an /ask:", transcript);
 
-      fetch("/ask", {
+      const askPromise = fetch("/ask", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
@@ -857,71 +862,99 @@ function ensureRecognition() {
           lang: detectedLanguage,
           conversationId: CONV_ID || null
         })
-      })
-      .then(r => r.json())
-      .then(data => {
-        STATE = "answer";
+      }).then(r => r.json());
 
-        resetMovements();
+      // Think-Phrase zuerst sauber aussprechen
+      speak(thinkPhrase, true, detectedLanguage);
 
-        rising = true;
-        riseStartTime = performance.now();
+      // Antwort erst dann sprechen, wenn
+      // 1) Serverantwort da ist
+      // 2) Think-Phrase wirklich fertig ist
+      askPromise
+        .then(data => {
+          const waitForThinkEnd = setInterval(() => {
+            if (!talking) {
+              clearInterval(waitForThinkEnd);
 
-        let answerLang = "de";
+              STATE = "answer";
 
-        if (data && (data.answerLang === "de" || data.answerLang === "en")) {
-          answerLang = data.answerLang;
-        }
+              resetMovements();
 
-        detectedLanguage = answerLang;
+              // ✅ Ab jetzt frontal bleiben
+              frontalFix = true;
+              hmNeigen = false;
 
-        const answer =
-          data && data.answer
-            ? data.answer
-            : "Verzeiht, darauf weiß ich im Moment keine gute Antwort.";
+              rising = true;
+              riseStartTime = performance.now();
 
-        console.log("✅ Antwort:", answer);
+              let answerLang = "de";
 
-        speak(answer, false, answerLang);
+              if (data && (data.answerLang === "de" || data.answerLang === "en")) {
+                answerLang = data.answerLang;
+              }
 
-        // ✅ WICHTIG: nicht auf callback verlassen,
-        // sondern wirklich warten, bis das Sprechen fertig ist
-        const waitForAnswerEnd = setInterval(() => {
-          if (STATE !== "answer") {
-            clearInterval(waitForAnswerEnd);
-            return;
-          }
+              detectedLanguage = answerLang;
 
-          if (!talking) {
-            clearInterval(waitForAnswerEnd);
+              const answer =
+                data && data.answer
+                  ? data.answer
+                  : "Verzeiht, darauf weiß ich im Moment keine gute Antwort.";
 
-            lastTranscript = "";
-            heardSomething = false;
-            listeningFinished = false;
+              console.log("✅ Antwort:", answer);
 
-            STATE = "listen";
+              speak(answer, false, answerLang);
 
-            setTimeout(() => {
-              if (STATE !== "listen") return;
-              if (talking || recRunning) return;
-              startRecognition();
-            }, 350);
-          }
-        }, 120);
-      })
-      .catch(err => {
-        console.warn("❌ /ask Fehler:", err);
+              // ✅ Nach der Antwort direkt wieder zuhören
+              const waitForAnswerEnd = setInterval(() => {
+                if (STATE !== "answer") {
+                  clearInterval(waitForAnswerEnd);
+                  return;
+                }
 
-        STATE = "greet";
+                if (!talking) {
+                  clearInterval(waitForAnswerEnd);
 
-        speak(
-          "Verzeiht, es gab ein Problem bei meiner Antwort.",
-          false,
-          "de"
-        );
+                  lastTranscript = "";
+                  heardSomething = false;
+                  listeningFinished = false;
 
-        showHint("Kurz Knopf drücken, dann fragen");
-      });
+                  // ✅ auch beim weiteren Zuhören frontal bleiben
+                  frontalFix = true;
+                  hmNeigen = false;
+
+                  STATE = "listen";
+
+                  setTimeout(() => {
+                    if (STATE !== "listen") return;
+                    if (talking || recRunning) return;
+                    startRecognition();
+                  }, 450);
+                }
+              }, 120);
+            }
+          }, 120);
+        })
+        .catch(err => {
+          console.warn("❌ /ask Fehler:", err);
+
+          const waitForThinkEnd = setInterval(() => {
+            if (!talking) {
+              clearInterval(waitForThinkEnd);
+
+              STATE = "greet";
+              frontalFix = true;
+              hmNeigen = false;
+
+              speak(
+                "Verzeiht, es gab ein Problem bei meiner Antwort.",
+                false,
+                "de"
+              );
+
+              showHint("Kurz Knopf drücken, dann fragen");
+            }
+          }, 120);
+        });
     };
   }
 
@@ -943,6 +976,10 @@ function startRecognition() {
 
   heardSomething = false;
   lastTranscript = "";
+
+  // ✅ Zuhören frontal
+  frontalFix = true;
+  hmNeigen = false;
 
   recRunning = true;
 
@@ -1018,6 +1055,10 @@ function startInteraction() {
   if (STATE === "greet") {
 
     hideHint();
+
+    // ✅ schon vor dem Zuhören frontal
+    frontalFix = true;
+    hmNeigen = false;
 
     STATE = "listen";
 
