@@ -761,17 +761,15 @@ function autoListenNextTurn(reason = "") {
    - Think-Phrase nicht abgeschnitten
    - Antwort frontal
    - nach Antwort automatisch wieder zuhören
-   - frontal bei Antwort, Rückfrage und weiterem Zuhören
-   - stabiler Recognition-Restart nach speechSynthesis
+   - Recognition wird für jeden neuen Listen-Durchlauf frisch aufgebaut
 ----------------------------- */
 
 let recognition = null;
 let heardSomething = false;
 let detectedLanguage = "de";
 
-// kleine Stabilisierung gegen hängende Restarts
-let _recRestartTimer = null;
-let _recRecoveryTimer = null;
+let _autoListenTimer = null;
+let _autoListenWatchdog = null;
 
 function getSpeechRecognitionCtor() {
   return window.SpeechRecognition || window.webkitSpeechRecognition || null;
@@ -780,6 +778,31 @@ function getSpeechRecognitionCtor() {
 /* ===============================
    Recognition Setup
 ================================ */
+
+function clearRecognitionTimers() {
+  if (_autoListenTimer) {
+    clearTimeout(_autoListenTimer);
+    _autoListenTimer = null;
+  }
+  if (_autoListenWatchdog) {
+    clearTimeout(_autoListenWatchdog);
+    _autoListenWatchdog = null;
+  }
+}
+
+function destroyRecognition() {
+  try {
+    if (recognition) {
+      recognition.onresult = null;
+      recognition.onerror = null;
+      recognition.onend = null;
+      try { recognition.abort(); } catch (e) {}
+    }
+  } catch (e) {}
+
+  recognition = null;
+  recRunning = false;
+}
 
 function ensureRecognition() {
   const SR = getSpeechRecognitionCtor();
@@ -816,42 +839,27 @@ function ensureRecognition() {
       console.warn("🎙️ recognition.onerror:", e);
 
       recRunning = false;
-
-      if (_recRecoveryTimer) {
-        clearTimeout(_recRecoveryTimer);
-        _recRecoveryTimer = null;
-      }
-
-      if (_recRestartTimer) {
-        clearTimeout(_recRestartTimer);
-        _recRestartTimer = null;
-      }
-
-      // Wenn wir mitten im fortlaufenden Dialog sind, erneut zuhören versuchen
-      if (STATE === "listen" && greeted) {
-        frontalFix = true;
-        hmNeigen = false;
-
-        _recRecoveryTimer = setTimeout(() => {
-          if (STATE !== "listen") return;
-          if (talking || recRunning) return;
-
-          try {
-            startRecognition();
-          } catch (err) {
-            console.warn("⚠️ Recovery startRecognition fehlgeschlagen:", err);
-            STATE = "greet";
-            greeted = true;
-            frontalFix = true;
-            hmNeigen = false;
-            try { showHint("Kurz Knopf drücken, dann fragen"); } catch (e2) {}
-          }
-        }, 900);
-
-        return;
-      }
+      clearRecognitionTimers();
 
       if (STATE === "listen") {
+        // im laufenden Dialog automatisch neuen Listen-Versuch
+        if (greeted) {
+          frontalFix = true;
+          hmNeigen = false;
+
+          _autoListenTimer = setTimeout(() => {
+            _autoListenTimer = null;
+
+            if (STATE !== "listen") return;
+            if (talking || recRunning) return;
+
+            destroyRecognition();
+            startRecognition();
+          }, 900);
+
+          return;
+        }
+
         STATE = "greet";
         greeted = true;
         frontalFix = true;
@@ -863,31 +871,22 @@ function ensureRecognition() {
     recognition.onend = () => {
       recRunning = false;
 
-      // Wenn wir per Restart absichtlich abbrechen, nicht in die normale Logik fallen
-      if (_recRestartTimer) return;
-
       if (STATE !== "listen") return;
 
       if (!heardSomething || !lastTranscript) {
-        // Im laufenden Dialog lieber weiter zuhören statt komplett zurückzufallen
+        // im aktiven Dialog weiter zuhören statt rauszufallen
         if (greeted) {
           frontalFix = true;
           hmNeigen = false;
 
-          _recRecoveryTimer = setTimeout(() => {
+          _autoListenTimer = setTimeout(() => {
+            _autoListenTimer = null;
+
             if (STATE !== "listen") return;
             if (talking || recRunning) return;
 
-            try {
-              startRecognition();
-            } catch (err) {
-              console.warn("⚠️ Recovery nach onend fehlgeschlagen:", err);
-              STATE = "greet";
-              greeted = true;
-              frontalFix = true;
-              hmNeigen = false;
-              try { showHint("Kurz Knopf drücken, dann fragen"); } catch (e2) {}
-            }
+            destroyRecognition();
+            startRecognition();
           }, 700);
 
           return;
@@ -909,8 +908,6 @@ function ensureRecognition() {
 
       resetMovements();
 
-      // Think darf leicht bewegt sein,
-      // aber ab Antwort wieder strikt frontal.
       frontalFix = false;
       hmNeigen = true;
       hmStartTime = performance.now();
@@ -948,7 +945,6 @@ function ensureRecognition() {
 
               resetMovements();
 
-              // ✅ Ab Antwort frontal
               frontalFix = true;
               hmNeigen = false;
 
@@ -956,7 +952,6 @@ function ensureRecognition() {
               riseStartTime = performance.now();
 
               let answerLang = "de";
-
               if (data && (data.answerLang === "de" || data.answerLang === "en")) {
                 answerLang = data.answerLang;
               }
@@ -972,7 +967,6 @@ function ensureRecognition() {
 
               speak(answer, false, answerLang);
 
-              // ✅ Nach der Antwort automatisch wieder zuhören
               const waitForAnswerEnd = setInterval(() => {
                 if (STATE !== "answer") {
                   clearInterval(waitForAnswerEnd);
@@ -986,70 +980,39 @@ function ensureRecognition() {
                   heardSomething = false;
                   listeningFinished = false;
 
-                  // Avatar bleibt frontal
                   frontalFix = true;
                   hmNeigen = false;
-
-                  // Dialog bleibt aktiv
                   greeted = true;
                   STATE = "listen";
 
                   console.log("🎧 Dialog läuft weiter – starte neue Aufnahme");
 
-                  if (_recRestartTimer) {
-                    clearTimeout(_recRestartTimer);
-                    _recRestartTimer = null;
-                  }
+                  clearRecognitionTimers();
 
-                  if (_recRecoveryTimer) {
-                    clearTimeout(_recRecoveryTimer);
-                    _recRecoveryTimer = null;
-                  }
+                  // WICHTIG:
+                  // Recognition komplett neu aufbauen statt alte Instanz weiterzuverwenden
+                  _autoListenTimer = setTimeout(() => {
+                    _autoListenTimer = null;
 
-                  // 🔧 WICHTIG: Recognition sauber neu starten
-                  _recRestartTimer = setTimeout(() => {
-                    try {
-                      if (recognition) {
-                        recognition.abort();
-                      }
-                    } catch (e) {}
+                    if (STATE !== "listen") return;
+                    if (talking || recRunning) return;
 
-                    recRunning = false;
+                    destroyRecognition();
+                    startRecognition();
+                  }, 750);
 
-                    _recRestartTimer = setTimeout(() => {
-                      _recRestartTimer = null;
+                  // Watchdog: falls der Restart nicht anspringt, genau EINEN zweiten Versuch
+                  _autoListenWatchdog = setTimeout(() => {
+                    _autoListenWatchdog = null;
 
-                      if (STATE !== "listen") return;
-                      if (talking || recRunning) return;
+                    if (STATE !== "listen") return;
+                    if (recRunning || talking) return;
 
-                      try {
-                        startRecognition();
-                      } catch (e) {
-                        console.warn("⚠️ Recognition Restart fehlgeschlagen:", e);
-                      }
+                    console.warn("⚠️ Auto-Listen hing – zweiter Neustart");
 
-                      // kleine Zusatz-Stabilisierung:
-                      // wenn nach dem Restart nichts lief, noch ein kontrollierter Recovery-Versuch
-                      if (_recRecoveryTimer) {
-                        clearTimeout(_recRecoveryTimer);
-                      }
-
-                      _recRecoveryTimer = setTimeout(() => {
-                        _recRecoveryTimer = null;
-
-                        if (STATE !== "listen") return;
-                        if (recRunning || talking) return;
-
-                        console.warn("⚠️ Recognition hing nach Auto-Restart – Recovery-Versuch");
-
-                        try {
-                          startRecognition();
-                        } catch (e2) {
-                          console.warn("⚠️ Recovery Restart fehlgeschlagen:", e2);
-                        }
-                      }, 1400);
-                    }, 120);
-                  }, 650);
+                    destroyRecognition();
+                    startRecognition();
+                  }, 2300);
                 }
               }, 120);
             }
@@ -1094,17 +1057,13 @@ function startRecognition() {
     return;
   }
 
-  if (_recRecoveryTimer) {
-    clearTimeout(_recRecoveryTimer);
-    _recRecoveryTimer = null;
-  }
+  clearRecognitionTimers();
 
   r.lang = detectedLanguage === "en" ? "en-US" : "de-DE";
 
   heardSomething = false;
   lastTranscript = "";
 
-  // ✅ Zuhören frontal
   frontalFix = true;
   hmNeigen = false;
 
