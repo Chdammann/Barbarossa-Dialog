@@ -760,13 +760,18 @@ function autoListenNextTurn(reason = "") {
    FIX:
    - Think-Phrase nicht abgeschnitten
    - Antwort frontal
-   - nach Antwort sofort wieder zuhören
+   - nach Antwort automatisch wieder zuhören
    - frontal bei Antwort, Rückfrage und weiterem Zuhören
+   - stabiler Recognition-Restart nach speechSynthesis
 ----------------------------- */
 
 let recognition = null;
 let heardSomething = false;
 let detectedLanguage = "de";
+
+// kleine Stabilisierung gegen hängende Restarts
+let _recRestartTimer = null;
+let _recRecoveryTimer = null;
 
 function getSpeechRecognitionCtor() {
   return window.SpeechRecognition || window.webkitSpeechRecognition || null;
@@ -812,6 +817,40 @@ function ensureRecognition() {
 
       recRunning = false;
 
+      if (_recRecoveryTimer) {
+        clearTimeout(_recRecoveryTimer);
+        _recRecoveryTimer = null;
+      }
+
+      if (_recRestartTimer) {
+        clearTimeout(_recRestartTimer);
+        _recRestartTimer = null;
+      }
+
+      // Wenn wir mitten im fortlaufenden Dialog sind, erneut zuhören versuchen
+      if (STATE === "listen" && greeted) {
+        frontalFix = true;
+        hmNeigen = false;
+
+        _recRecoveryTimer = setTimeout(() => {
+          if (STATE !== "listen") return;
+          if (talking || recRunning) return;
+
+          try {
+            startRecognition();
+          } catch (err) {
+            console.warn("⚠️ Recovery startRecognition fehlgeschlagen:", err);
+            STATE = "greet";
+            greeted = true;
+            frontalFix = true;
+            hmNeigen = false;
+            try { showHint("Kurz Knopf drücken, dann fragen"); } catch (e2) {}
+          }
+        }, 900);
+
+        return;
+      }
+
       if (STATE === "listen") {
         STATE = "greet";
         greeted = true;
@@ -824,9 +863,36 @@ function ensureRecognition() {
     recognition.onend = () => {
       recRunning = false;
 
+      // Wenn wir per Restart absichtlich abbrechen, nicht in die normale Logik fallen
+      if (_recRestartTimer) return;
+
       if (STATE !== "listen") return;
 
       if (!heardSomething || !lastTranscript) {
+        // Im laufenden Dialog lieber weiter zuhören statt komplett zurückzufallen
+        if (greeted) {
+          frontalFix = true;
+          hmNeigen = false;
+
+          _recRecoveryTimer = setTimeout(() => {
+            if (STATE !== "listen") return;
+            if (talking || recRunning) return;
+
+            try {
+              startRecognition();
+            } catch (err) {
+              console.warn("⚠️ Recovery nach onend fehlgeschlagen:", err);
+              STATE = "greet";
+              greeted = true;
+              frontalFix = true;
+              hmNeigen = false;
+              try { showHint("Kurz Knopf drücken, dann fragen"); } catch (e2) {}
+            }
+          }, 700);
+
+          return;
+        }
+
         STATE = "greet";
         greeted = true;
         frontalFix = true;
@@ -873,7 +939,7 @@ function ensureRecognition() {
       speak(thinkPhrase, true, detectedLanguage);
 
       askPromise
-        .then(data => {
+        .then((data) => {
           const waitForThinkEnd = setInterval(() => {
             if (!talking) {
               clearInterval(waitForThinkEnd);
@@ -906,7 +972,7 @@ function ensureRecognition() {
 
               speak(answer, false, answerLang);
 
-              // ✅ Nach der Antwort sofort wieder zuhören
+              // ✅ Nach der Antwort automatisch wieder zuhören
               const waitForAnswerEnd = setInterval(() => {
                 if (STATE !== "answer") {
                   clearInterval(waitForAnswerEnd);
@@ -920,30 +986,76 @@ function ensureRecognition() {
                   heardSomething = false;
                   listeningFinished = false;
 
-                  // ✅ Dialog bleibt aktiv, frontal und hört direkt weiter zu
-                  greeted = true;
+                  // Avatar bleibt frontal
                   frontalFix = true;
                   hmNeigen = false;
+
+                  // Dialog bleibt aktiv
+                  greeted = true;
                   STATE = "listen";
 
-                  setTimeout(() => {
-                    if (STATE !== "listen") return;
-                    if (talking || recRunning) return;
+                  console.log("🎧 Dialog läuft weiter – starte neue Aufnahme");
 
-                    // falls ein anderer Block auf idle/greet zurückgesetzt hat, hier hart korrigieren
-                    greeted = true;
-                    frontalFix = true;
-                    hmNeigen = false;
-                    STATE = "listen";
+                  if (_recRestartTimer) {
+                    clearTimeout(_recRestartTimer);
+                    _recRestartTimer = null;
+                  }
 
-                    startRecognition();
-                  }, 450);
+                  if (_recRecoveryTimer) {
+                    clearTimeout(_recRecoveryTimer);
+                    _recRecoveryTimer = null;
+                  }
+
+                  // 🔧 WICHTIG: Recognition sauber neu starten
+                  _recRestartTimer = setTimeout(() => {
+                    try {
+                      if (recognition) {
+                        recognition.abort();
+                      }
+                    } catch (e) {}
+
+                    recRunning = false;
+
+                    _recRestartTimer = setTimeout(() => {
+                      _recRestartTimer = null;
+
+                      if (STATE !== "listen") return;
+                      if (talking || recRunning) return;
+
+                      try {
+                        startRecognition();
+                      } catch (e) {
+                        console.warn("⚠️ Recognition Restart fehlgeschlagen:", e);
+                      }
+
+                      // kleine Zusatz-Stabilisierung:
+                      // wenn nach dem Restart nichts lief, noch ein kontrollierter Recovery-Versuch
+                      if (_recRecoveryTimer) {
+                        clearTimeout(_recRecoveryTimer);
+                      }
+
+                      _recRecoveryTimer = setTimeout(() => {
+                        _recRecoveryTimer = null;
+
+                        if (STATE !== "listen") return;
+                        if (recRunning || talking) return;
+
+                        console.warn("⚠️ Recognition hing nach Auto-Restart – Recovery-Versuch");
+
+                        try {
+                          startRecognition();
+                        } catch (e2) {
+                          console.warn("⚠️ Recovery Restart fehlgeschlagen:", e2);
+                        }
+                      }, 1400);
+                    }, 120);
+                  }, 650);
                 }
               }, 120);
             }
           }, 120);
         })
-        .catch(err => {
+        .catch((err) => {
           console.warn("❌ /ask Fehler:", err);
 
           const waitForThinkEnd = setInterval(() => {
@@ -980,6 +1092,11 @@ function startRecognition() {
   if (!r) {
     alert("Spracherkennung wird von diesem Browser nicht unterstützt.");
     return;
+  }
+
+  if (_recRecoveryTimer) {
+    clearTimeout(_recRecoveryTimer);
+    _recRecoveryTimer = null;
   }
 
   r.lang = detectedLanguage === "en" ? "en-US" : "de-DE";
@@ -1180,7 +1297,7 @@ document.addEventListener("visibilitychange", () => {
 });
   
 /* -----------------------------
-   SPEAK – FINAL (VISEME-STABIL) – FIXED v3 (DIALOG-SAFE)
+   SPEAK – FINAL (VISEME-STABIL) – FIXED v3.1 (DIALOG-SAFE / NO STATE OVERRIDE)
    (SERVER LANG PRIO + EN OFFLINE-VOICE + cancelt nur wenn speaking/pending)
 ----------------------------- */
 function speak(text, slow = false, forceLang = null, onEnd = null) {
@@ -1344,7 +1461,7 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
     hardStopToRest();
     talking = false;
 
-    // Dialog: Aktivität aktualisieren (verhindert Timeout direkt nach Antwort)
+    // Dialog: Aktivität aktualisieren
     try {
       if (typeof SESSION_ACTIVE !== "undefined" && SESSION_ACTIVE) {
         SESSION_LAST_TS = Date.now();
@@ -1360,35 +1477,17 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
       }
     }
 
+    // ✅ WICHTIG:
+    // speak() überschreibt den Dialogzustand nach Antworten NICHT mehr selbst.
+    // Die Recognition-Logik entscheidet, ob wieder zugehört wird.
     if (STATE === "answer") {
-  resetMovements();
-  hmNeigen = false;
-  rising = false;
-
-  const endedNow = !!(window._SESSION_ENDED === true);
-
-  // ✅ Wenn Server das Gespräch beendet hat: NICHT auto-listen, zurück in idle
-  if (endedNow) {
-    try { window._SESSION_ENDED = false; } catch (e) {}
-    greeted = false;
-    STATE = "idle";
-    try { if (typeof hideHint === "function") hideHint(); } catch (e) {}
-  }
-  // ✅ DIALOG: nach Antwort in greet bleiben (Session aktiv), dann automatisch weiter zuhören
-  else if (typeof SESSION_ACTIVE !== "undefined" && SESSION_ACTIVE) {
-    STATE = "greet";
-    greeted = true;
-
-    try { if (typeof showHint === "function") showHint("Ich höre zu …"); } catch (e) {}
-
-    // 🔥 jetzt automatisch nächste Eingabe starten (ohne Enter)
-    autoListenNextTurn("after-answer");
-  } else {
-    greeted = false;
-    STATE = "idle";
-    if (typeof hideHint === "function") hideHint();
-  }
-}
+      try { resetMovements(); } catch (e) {}
+      try {
+        hmNeigen = false;
+        rising = false;
+        frontalFix = true;
+      } catch (e) {}
+    }
 
     if (onEnd && typeof onEnd === "function") {
       try { onEnd(); } catch (e) {}
@@ -1427,7 +1526,7 @@ function speak(text, slow = false, forceLang = null, onEnd = null) {
     }
   };
 
-  u.onend   = () => finalizeOnce("onend");
+  u.onend = () => finalizeOnce("onend");
   u.onerror = () => finalizeOnce("onerror");
 
   // ✅ FAILSAFE (viel großzügiger) – cancelt NUR wenn wirklich noch gesprochen wird
