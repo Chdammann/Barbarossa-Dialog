@@ -758,9 +758,10 @@ function autoListenNextTurn(reason = "") {
    STATE MACHINE – RECOGNITION
    STABLE BASE VERSION + CONTINUOUS DIALOG
    FIX:
-   - Think-Phrase nicht mehr abgeschnitten
-   - Antwort / Rückfrage / Zuhören frontal
-   - nach Antwort wieder zuhören
+   - Think-Phrase nicht abgeschnitten
+   - Antwort frontal
+   - nach Antwort sofort wieder zuhören
+   - frontal bei Antwort, Rückfrage und weiterem Zuhören
 ----------------------------- */
 
 let recognition = null;
@@ -813,6 +814,9 @@ function ensureRecognition() {
 
       if (STATE === "listen") {
         STATE = "greet";
+        greeted = true;
+        frontalFix = true;
+        hmNeigen = false;
         showHint("Kurz Knopf drücken, dann fragen");
       }
     };
@@ -824,6 +828,9 @@ function ensureRecognition() {
 
       if (!heardSomething || !lastTranscript) {
         STATE = "greet";
+        greeted = true;
+        frontalFix = true;
+        hmNeigen = false;
         showHint("Kurz Knopf drücken, dann fragen");
         return;
       }
@@ -836,10 +843,9 @@ function ensureRecognition() {
 
       resetMovements();
 
-      // THINK darf leicht aus der Frontalität heraus,
-      // aber danach bei Antwort / Zuhören wieder frontal.
+      // Think darf leicht bewegt sein,
+      // aber ab Antwort wieder strikt frontal.
       frontalFix = false;
-
       hmNeigen = true;
       hmStartTime = performance.now();
 
@@ -864,12 +870,8 @@ function ensureRecognition() {
         })
       }).then(r => r.json());
 
-      // Think-Phrase zuerst sauber aussprechen
       speak(thinkPhrase, true, detectedLanguage);
 
-      // Antwort erst dann sprechen, wenn
-      // 1) Serverantwort da ist
-      // 2) Think-Phrase wirklich fertig ist
       askPromise
         .then(data => {
           const waitForThinkEnd = setInterval(() => {
@@ -880,7 +882,7 @@ function ensureRecognition() {
 
               resetMovements();
 
-              // ✅ Ab jetzt frontal bleiben
+              // ✅ Ab Antwort frontal
               frontalFix = true;
               hmNeigen = false;
 
@@ -904,7 +906,7 @@ function ensureRecognition() {
 
               speak(answer, false, answerLang);
 
-              // ✅ Nach der Antwort direkt wieder zuhören
+              // ✅ Nach der Antwort sofort wieder zuhören
               const waitForAnswerEnd = setInterval(() => {
                 if (STATE !== "answer") {
                   clearInterval(waitForAnswerEnd);
@@ -918,15 +920,22 @@ function ensureRecognition() {
                   heardSomething = false;
                   listeningFinished = false;
 
-                  // ✅ auch beim weiteren Zuhören frontal bleiben
+                  // ✅ Dialog bleibt aktiv, frontal und hört direkt weiter zu
+                  greeted = true;
                   frontalFix = true;
                   hmNeigen = false;
-
                   STATE = "listen";
 
                   setTimeout(() => {
                     if (STATE !== "listen") return;
                     if (talking || recRunning) return;
+
+                    // falls ein anderer Block auf idle/greet zurückgesetzt hat, hier hart korrigieren
+                    greeted = true;
+                    frontalFix = true;
+                    hmNeigen = false;
+                    STATE = "listen";
+
                     startRecognition();
                   }, 450);
                 }
@@ -941,6 +950,7 @@ function ensureRecognition() {
             if (!talking) {
               clearInterval(waitForThinkEnd);
 
+              greeted = true;
               STATE = "greet";
               frontalFix = true;
               hmNeigen = false;
@@ -999,7 +1009,6 @@ function startRecognition() {
 const micBtn = document.getElementById("micBtn");
 
 if (micBtn) {
-
   micBtn.onclick = startInteraction;
 
   document.addEventListener("keydown", (e) => {
@@ -1007,11 +1016,9 @@ if (micBtn) {
     e.preventDefault();
     startInteraction();
   });
-
 }
 
 function startInteraction() {
-
   if (talking || recRunning) return;
 
   if (STATE === "think" || STATE === "answer") return;
@@ -1021,7 +1028,6 @@ function startInteraction() {
   =============================== */
 
   if (STATE === "idle" && !greeted) {
-
     greeted = true;
     STATE = "greet";
 
@@ -1053,10 +1059,8 @@ function startInteraction() {
   =============================== */
 
   if (STATE === "greet") {
-
     hideHint();
 
-    // ✅ schon vor dem Zuhören frontal
     frontalFix = true;
     hmNeigen = false;
 
