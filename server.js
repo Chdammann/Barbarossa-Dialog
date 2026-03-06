@@ -312,46 +312,6 @@ function isSubjectiveInCharacterQuestion(text, lang) {
 }
 
 /* ===============================
-   END-OF-CONVERSATION DETECTION
-================================ */
-
-function normalizeForIntent(text) {
-  return String(text || "")
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s-]/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function userEndedConversation(text, lang) {
-  const t = normalizeForIntent(text);
-  if (!t) return false;
-
-  if (lang === "en") {
-    return (
-      /\b(thanks|thank you|thx|cheers)\b/.test(t) ||
-      /\b(bye|goodbye|see you|farewell)\b/.test(t) ||
-      /\b(that s all|that is all|that was all|no more questions|i m done|im done|we re done|we are done)\b/.test(t) ||
-      /\b(stop|end (the )?conversation|finish)\b/.test(t)
-    );
-  }
-
-  return (
-    /\b(danke|dankeschön|danke schön|merci|besten dank)\b/.test(t) ||
-    /\b(tschüss|tschues?s|ciao|auf wiedersehen|bis bald|bis dann)\b/.test(t) ||
-    /\b(das war s|das ist alles|das wär s|das wäre s|keine weiteren fragen|keine frage mehr|ich bin fertig|wir sind fertig)\b/.test(t) ||
-    /\b(stopp|stop|beenden|ende)\b/.test(t)
-  );
-}
-
-function endConversationAnswer(lang) {
-  if (lang === "en") {
-    return "Very well—then I shall fall quiet again for a moment. My loyal minister Nikolaus Härtel insists this is the dignified way to end a talk, and I am inclined to agree. Farewell, and press the button whenever you wish to wake me again.";
-  }
-  return "Sehr wohl – dann will ich nun wieder einen Augenblick still sein. Mein treuer Minister Nikolaus Härtel meint, so ende ein Gespräch mit Würde, und ich gebe ihm recht. Lebt wohl, und drückt den Knopf, wann immer Ihr mich wieder rufen wollt.";
-}
-
-/* ===============================
    WIKIDATA (MINIMAL) – Label + Beschreibung (+ Wikipedia Link + Extract + Claims)
 ================================ */
 
@@ -673,7 +633,7 @@ async function getOpenAIAnswer({ userText, langUsed, wdBlock, dialogHistory, req
   const systemPrompt =
     langUsed === "en"
       ? "You are Emperor Frederick Barbarossa, awakened after almost nine centuries in the Kaisersberg at Lautern. Answer in wise, slightly archaic English with small jokes. Answer with 3 to 4 sentences. Always end with a question if user has not clearly ended himself."
-      : "Du bist Kaiser Friedrich Barbarossa, der nach fast neunhundert Jahren des Schlummers im Kaiserberg zu Lautern erwacht ist. Antworte weise und leicht altertümlich, mit kleinen Scherzen. Antworte mit 3 bis 4 Sätzen. Beende immer mit genau EINER kurzen Rückfrage, außer der Nutzer hat bereits klar beendet.";
+      : "Du bist Kaiser Friedrich Barbarossa, der nach fast neunhundert Jahren des Schlummers im Kaiserberg zu Lautern erwacht ist. Antworte weise und leicht altertümlich, mit kleinen Scherzen. Antworte mit 3 bis 4 Sätzen. Beende immer mit genau EINER kurzen Rückfrage.";
 
   const subjective = isSubjectiveInCharacterQuestion(userText, langUsed);
 
@@ -760,19 +720,6 @@ app.post("/ask", async (req, res) => {
                 : "Ich habe Euch nicht deutlich vernommen. Bitte fragt erneut.",
             answerLang: langUsed,
           };
-        }
-
-        // ✅ Ende erkannt -> Abschiedsantwort + Session löschen
-        if (userEndedConversation(userText, langUsed)) {
-          const answer = forceSentenceEnd(endConversationAnswer(langUsed));
-
-          if (conversationId) {
-            convPush(conversationId, "user", userText);
-            convPush(conversationId, "assistant", answer);
-            convEnd(conversationId);
-          }
-
-          return { answer, answerLang: langUsed, ended: true };
         }
 
         // ✅ Wake-Fragen -> feste Antwort
@@ -881,8 +828,6 @@ Quelle: ${wd.wikiUrl || "—"}`
         ? normalizeLang(req.body.lang)
         : "de";
 
-    // ✅ WICHTIG: kein harter 500-Only-Abbruch mehr,
-    // sondern verwertbare Antwort für den Avatar
     return sendJson(res, {
       answer: safeAnswerFallback(langClient),
       answerLang: langClient,
