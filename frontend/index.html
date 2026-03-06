@@ -761,7 +761,7 @@ function autoListenNextTurn(reason = "") {
    - Think-Phrase nicht abgeschnitten
    - Antwort frontal
    - nach Antwort automatisch wieder zuhören
-   - Recognition wird für jeden neuen Listen-Durchlauf frisch aufgebaut
+   - zentraler, stabiler Auto-Restart
 ----------------------------- */
 
 let recognition = null;
@@ -770,13 +770,15 @@ let detectedLanguage = "de";
 
 let _autoListenTimer = null;
 let _autoListenWatchdog = null;
+let _autoListenRetryCount = 0;
+let _autoListenScheduled = false;
 
 function getSpeechRecognitionCtor() {
   return window.SpeechRecognition || window.webkitSpeechRecognition || null;
 }
 
 /* ===============================
-   Recognition Setup
+   Timer / Restart Helpers
 ================================ */
 
 function clearRecognitionTimers() {
@@ -803,6 +805,79 @@ function destroyRecognition() {
   recognition = null;
   recRunning = false;
 }
+
+function scheduleAutoListen(reason = "unknown", delay = 850) {
+  clearRecognitionTimers();
+  _autoListenScheduled = true;
+
+  console.log("🎧 Auto-Listen geplant:", reason);
+
+  _autoListenTimer = setTimeout(() => {
+    _autoListenTimer = null;
+
+    if (STATE !== "listen") {
+      _autoListenScheduled = false;
+      return;
+    }
+
+    if (talking || recRunning) {
+      _autoListenScheduled = false;
+      return;
+    }
+
+    frontalFix = true;
+    hmNeigen = false;
+
+    destroyRecognition();
+
+    try {
+      startRecognition();
+    } catch (e) {
+      console.warn("⚠️ startRecognition() bei Auto-Listen fehlgeschlagen:", e);
+      recRunning = false;
+    }
+
+    _autoListenWatchdog = setTimeout(() => {
+      _autoListenWatchdog = null;
+
+      if (STATE !== "listen") {
+        _autoListenScheduled = false;
+        return;
+      }
+
+      if (recRunning || talking) {
+        _autoListenRetryCount = 0;
+        _autoListenScheduled = false;
+        return;
+      }
+
+      _autoListenRetryCount++;
+
+      if (_autoListenRetryCount > 1) {
+        console.warn("⚠️ Auto-Listen endgültig fehlgeschlagen");
+        _autoListenScheduled = false;
+        return;
+      }
+
+      console.warn("⚠️ Auto-Listen hing – Retry");
+
+      destroyRecognition();
+
+      try {
+        startRecognition();
+      } catch (e2) {
+        console.warn("⚠️ Retry startRecognition() fehlgeschlagen:", e2);
+        recRunning = false;
+      }
+
+      _autoListenScheduled = false;
+    }, 2400);
+  }, delay);
+}
+
+/* ===============================
+   Recognition Setup
+================================ */
 
 function ensureRecognition() {
   const SR = getSpeechRecognitionCtor();
@@ -831,41 +906,31 @@ function ensureRecognition() {
           : "de";
 
       heardSomething = true;
+      _autoListenRetryCount = 0;
 
       console.log("📝 onresult:", clean);
     };
 
     recognition.onerror = (e) => {
       console.warn("🎙️ recognition.onerror:", e);
-
       recRunning = false;
-      clearRecognitionTimers();
 
-      if (STATE === "listen") {
-        // im laufenden Dialog automatisch neuen Listen-Versuch
-        if (greeted) {
-          frontalFix = true;
-          hmNeigen = false;
+      if (STATE !== "listen") return;
 
-          _autoListenTimer = setTimeout(() => {
-            _autoListenTimer = null;
-
-            if (STATE !== "listen") return;
-            if (talking || recRunning) return;
-
-            destroyRecognition();
-            startRecognition();
-          }, 900);
-
-          return;
-        }
-
-        STATE = "greet";
-        greeted = true;
+      // Im laufenden Dialog immer Auto-Listen versuchen,
+      // statt auf greet/idle zurückzufallen
+      if (greeted) {
         frontalFix = true;
         hmNeigen = false;
-        showHint("Kurz Knopf drücken, dann fragen");
+        scheduleAutoListen("onerror", 950);
+        return;
       }
+
+      STATE = "greet";
+      greeted = true;
+      frontalFix = true;
+      hmNeigen = false;
+      showHint("Kurz Knopf drücken, dann fragen");
     };
 
     recognition.onend = () => {
@@ -873,22 +938,15 @@ function ensureRecognition() {
 
       if (STATE !== "listen") return;
 
+      // Wenn ein Auto-Restart geplant ist, nichts tun
+      if (_autoListenScheduled) return;
+
       if (!heardSomething || !lastTranscript) {
-        // im aktiven Dialog weiter zuhören statt rauszufallen
+        // Im aktiven Dialog lieber weiter zuhören
         if (greeted) {
           frontalFix = true;
           hmNeigen = false;
-
-          _autoListenTimer = setTimeout(() => {
-            _autoListenTimer = null;
-
-            if (STATE !== "listen") return;
-            if (talking || recRunning) return;
-
-            destroyRecognition();
-            startRecognition();
-          }, 700);
-
+          scheduleAutoListen("onend-empty", 800);
           return;
         }
 
@@ -985,34 +1043,8 @@ function ensureRecognition() {
                   greeted = true;
                   STATE = "listen";
 
-                  console.log("🎧 Dialog läuft weiter – starte neue Aufnahme");
-
-                  clearRecognitionTimers();
-
-                  // WICHTIG:
-                  // Recognition komplett neu aufbauen statt alte Instanz weiterzuverwenden
-                  _autoListenTimer = setTimeout(() => {
-                    _autoListenTimer = null;
-
-                    if (STATE !== "listen") return;
-                    if (talking || recRunning) return;
-
-                    destroyRecognition();
-                    startRecognition();
-                  }, 750);
-
-                  // Watchdog: falls der Restart nicht anspringt, genau EINEN zweiten Versuch
-                  _autoListenWatchdog = setTimeout(() => {
-                    _autoListenWatchdog = null;
-
-                    if (STATE !== "listen") return;
-                    if (recRunning || talking) return;
-
-                    console.warn("⚠️ Auto-Listen hing – zweiter Neustart");
-
-                    destroyRecognition();
-                    startRecognition();
-                  }, 2300);
+                  _autoListenRetryCount = 0;
+                  scheduleAutoListen("after-answer", 900);
                 }
               }, 120);
             }
@@ -1058,6 +1090,7 @@ function startRecognition() {
   }
 
   clearRecognitionTimers();
+  _autoListenScheduled = false;
 
   r.lang = detectedLanguage === "en" ? "en-US" : "de-DE";
 
@@ -1077,7 +1110,6 @@ function startRecognition() {
     recRunning = false;
   }
 }
-
 /* -----------------------------
    BUTTON + ENTER
 ----------------------------- */
