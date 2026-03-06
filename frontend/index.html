@@ -1225,7 +1225,7 @@ function startRecognition() {
 }
 /* -----------------------------
    BUTTON + ENTER – GREET & LISTEN
-   STABIL – FIXED v3.2 (NO LISTEN-LOOP)
+   STABIL – FIXED v3.3 (NO LISTEN RACE / REVIEWED)
 ----------------------------- */
 
 const micBtn = document.getElementById("micBtn");
@@ -1250,16 +1250,16 @@ if (!micBtn) {
   }
 
   /* ===============================
-     🔧 RESYNC: Flags & State heilen
+     🔧 RESYNC: nur harmlose Desyncs heilen
      WICHTIG:
-     - NICHT mehr aggressiv listen/think/answer auf greet setzen
-     - sonst entsteht die Aufnahme-Schleife
+     - KEIN STATE-Umbiegen während listen
+     - KEIN listen-start-guard mehr
   ================================ */
   let _lastHealAt = 0;
 
   function healIfStuck(tag = "") {
     const now = performance.now();
-    if (now - _lastHealAt < 200) return; // Entprellen
+    if (now - _lastHealAt < 200) return;
     _lastHealAt = now;
 
     // talking-Desync heilen
@@ -1271,29 +1271,35 @@ if (!micBtn) {
       }
     } catch (e) {}
 
-    // recRunning-Desync heilen
+    // recRunning nur dann heilen, wenn recognition wirklich fehlt
     try {
-      if (typeof recRunning !== "undefined" && recRunning && typeof recognition !== "undefined" && !recognition) {
-        console.warn("🩹 heal:", tag, "recRunning=true aber recognition=null → recRunning=false");
+      if (
+        typeof recRunning !== "undefined" &&
+        recRunning &&
+        (typeof recognition === "undefined" || !recognition)
+      ) {
+        console.warn("🩹 heal:", tag, "recRunning=true aber recognition fehlt → recRunning=false");
         recRunning = false;
       }
     } catch (e) {}
-
-    // ✅ KEIN hartes STATE-Heilen mehr während listen/think/answer
-    // Das hat die Schleife erzeugt.
   }
 
   function startInteraction() {
-    // ✅ vor jeder Aktion heilen
     healIfStuck("enter/click");
 
-    // 🛡️ keine parallelen Aktionen
+    // keine parallelen Aktionen
     if (
       (typeof talking !== "undefined" && talking) ||
       (typeof recRunning !== "undefined" && recRunning)
     ) return;
 
-    // 🔒 Doppelklick-Schutz / Tasterprellen
+    // während think/answer nichts triggern
+    if (STATE === "think" || STATE === "answer") return;
+
+    // wenn listen noch aktiv ist, ignorieren
+    if (STATE === "listen") return;
+
+    // Doppelklick-Schutz / Tasterprellen
     if (typeof buttonLocked !== "undefined" && buttonLocked) return;
     buttonLocked = true;
     setTimeout(() => { buttonLocked = false; }, 350);
@@ -1347,9 +1353,15 @@ if (!micBtn) {
       rising = true;
       riseStartTime = performance.now();
 
-      try { recognition?.abort(); } catch (e) {}
+      try {
+        if (typeof recognition !== "undefined" && recognition) {
+          recognition.abort();
+        }
+      } catch (e) {}
+
       recRunning = false;
       listeningFinished = false;
+      lastTranscript = "";
 
       speak(
         "Seid gegrüßt, mein Freund. Ich bin Friedrich Barbarossa, nach fast neunhundert Jahren im Kaiserberg zu Lautern erwacht. Was ist Euer Begehr? Nennt mir gern Euren edlen Namen. If you want, you can also ask in English.",
@@ -1374,11 +1386,11 @@ if (!micBtn) {
           try { resetMovements(); } catch (e) {}
           greeted = false;
           lastTranscript = "";
+          listeningFinished = false;
           STATE = "idle";
 
           try { hideHint(); } catch (e) {}
 
-          // === 🔹 SESSION ENDE (SAFE) ===
           try {
             SESSION_ACTIVE = false;
             CONV_ID = null;
@@ -1407,14 +1419,12 @@ if (!micBtn) {
         return;
       }
 
-      // === 🔹 Session aktiv halten (SAFE) ===
       try {
         if (typeof SESSION_ACTIVE !== "undefined" && SESSION_ACTIVE) {
           SESSION_LAST_TS = Date.now();
         }
       } catch (e) {}
 
-      // Hint sofort weg beim Start Listening
       try { hideHint(); } catch (e) {}
 
       if (typeof greetTimeout !== "undefined" && greetTimeout) {
@@ -1428,24 +1438,12 @@ if (!micBtn) {
 
       startRecognition();
 
-      // Falls Recognition gar nicht startet → zurück zu greet + Hint
-      setTimeout(() => {
-        // hier nur Desyncs heilen, aber NICHT STATE umbiegen
-        healIfStuck("listen-start-guard");
-
-        if (STATE === "listen" && !recRunning && !talking) {
-          console.warn("⚠️ Recognition start fehlgeschlagen – Fallback auf greet");
-          STATE = "greet";
-          try { resetMovements(); } catch (e) {}
-          try { showHint("Kurz Knopf drücken, dann in einem kurzen, vollständigen Satz fragen"); } catch (e) {}
-        }
-      }, 900);
+      // ✅ KEIN zusätzlicher Fallback-Timer hier
+      // Der Recognition-Block steuert alleine,
+      // ob bei Stille weitergehört oder auf greet zurückgegangen wird.
 
       return;
     }
-
-    // LISTEN ignoriert Enter
-    if (STATE === "listen") return;
   }
 }
 
