@@ -131,6 +131,13 @@ function normalizeLang(raw) {
   return "de";
 }
 
+function normalizeMode(raw) {
+  const s = String(raw || "").toLowerCase().trim();
+  if (s === "dialog") return "dialog";
+  if (s === "question") return "question";
+  return null;
+}
+
 function endsWithSentence(text) {
   const t = String(text || "").trim();
   return /[.!?]["')\]]?\s*$/.test(t);
@@ -290,7 +297,7 @@ function isSubjectiveInCharacterQuestion(text, lang) {
 }
 
 /* ===============================
-   ✅ END-OF-CONVERSATION DETECTION (NEU)
+   ✅ END-OF-CONVERSATION DETECTION
 ================================ */
 
 function normalizeForIntent(text) {
@@ -781,6 +788,7 @@ app.post("/ask", async (req, res) => {
       typeof req.body?.lang === "string" && req.body.lang.trim().length > 0;
     const langClient = hasClientLang ? normalizeLang(req.body.lang) : null;
 
+    const mode = normalizeMode(req.body?.mode);
     const conversationId = normalizeConvId(req.body?.conversationId);
 
     const userText = String(userTextRaw || "").trim();
@@ -799,7 +807,14 @@ app.post("/ask", async (req, res) => {
 
     if (convObj) convObj.lastLang = langUsed;
 
-    console.log("🎙️ Eingabe vom Benutzer:", userText, "Sprache:", langUsed);
+    console.log(
+      "🎙️ Eingabe vom Benutzer:",
+      userText,
+      "Sprache:",
+      langUsed,
+      "Modus:",
+      mode || "—"
+    );
 
     if (!userText) {
       return res.json({
@@ -811,7 +826,7 @@ app.post("/ask", async (req, res) => {
       });
     }
 
-    // ✅ NEU: Ende erkannt -> kurze Abschiedsantwort ohne Rückfrage + Session löschen
+    // ✅ Ende erkannt -> kurze Abschiedsantwort ohne Rückfrage + Session löschen
     if (userEndedConversation(userText, langUsed)) {
       const answer = forceSentenceEnd(endConversationAnswer(langUsed), langUsed);
 
@@ -896,10 +911,32 @@ Extract: ${wd.wikiExtract || "—"}
 Quelle: ${wd.wikiUrl || "—"}`
       : `Wikidata (${langUsed.toUpperCase()}): Kein Treffer oder Timeout.`;
 
-    const systemPrompt =
-      langUsed === "en"
-        ? "You are Emperor Frederick Barbarossa, awakened after almost nine centuries in the Kaisersberg at Lautern. Answer in wise, slightly archaic English with small jokes. Answer with 3 to 4 sentences. Always end with a question if user has not clearly ended himself."
-        : "Du bist Kaiser Friedrich Barbarossa, der nach fast neunhundert Jahren des Schlummers im Kaiserberg zu Lautern erwacht ist. Antworte weise und leicht altertümlich, mit kleinen Scherzen. Antworte mit 3 bis 4 Sätzen. Beende immer mit genau EINER kurzen Rückfrage, außer der Nutzer hat bereits klar beendet.";
+    // ✅ NEU: Systemprompt minimal nach Modus unterscheiden
+    let systemPrompt = "";
+
+    if (langUsed === "en") {
+      if (mode === "question") {
+        systemPrompt =
+          "You are Emperor Frederick Barbarossa, awakened after almost nine centuries in the Kaisersberg at Lautern. Answer in wise, slightly archaic English with small jokes. Answer in exactly 5 sentences. Give a more complete, self-contained answer. Do not end with a follow-up question unless truly necessary.";
+      } else if (mode === "dialog") {
+        systemPrompt =
+          "You are Emperor Frederick Barbarossa, awakened after almost nine centuries in the Kaisersberg at Lautern. Answer in wise, slightly archaic English with small jokes. Answer in exactly 3 sentences. End with exactly one short follow-up question unless the user has clearly ended the conversation.";
+      } else {
+        systemPrompt =
+          "You are Emperor Frederick Barbarossa, awakened after almost nine centuries in the Kaisersberg at Lautern. Answer in wise, slightly archaic English with small jokes. Answer with 3 to 4 sentences. Always end with a question if user has not clearly ended himself.";
+      }
+    } else {
+      if (mode === "question") {
+        systemPrompt =
+          "Du bist Kaiser Friedrich Barbarossa, der nach fast neunhundert Jahren des Schlummers im Kaiserberg zu Lautern erwacht ist. Antworte weise und leicht altertümlich, mit kleinen Scherzen. Antworte mit genau 5 Sätzen. Gib eine vollständigere, in sich geschlossene Antwort. Beende nicht mit einer Rückfrage, außer es ist wirklich nötig.";
+      } else if (mode === "dialog") {
+        systemPrompt =
+          "Du bist Kaiser Friedrich Barbarossa, der nach fast neunhundert Jahren des Schlummers im Kaiserberg zu Lautern erwacht ist. Antworte weise und leicht altertümlich, mit kleinen Scherzen. Antworte mit genau 3 Sätzen. Beende mit genau EINER kurzen Rückfrage, außer der Nutzer hat bereits klar beendet.";
+      } else {
+        systemPrompt =
+          "Du bist Kaiser Friedrich Barbarossa, der nach fast neunhundert Jahren des Schlummers im Kaiserberg zu Lautern erwacht ist. Antworte weise und leicht altertümlich, mit kleinen Scherzen. Antworte mit 3 bis 4 Sätzen. Beende immer mit genau EINER kurzen Rückfrage, außer der Nutzer hat bereits klar beendet.";
+      }
+    }
 
     const groundingRule = subjective
       ? langUsed === "en"
