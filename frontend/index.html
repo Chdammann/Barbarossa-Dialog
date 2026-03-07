@@ -756,9 +756,10 @@ function autoListenNextTurn(reason = "") {
 }
 /* -----------------------------
    STATE MACHINE – RECOGNITION
-   MIT THINK-PHASE (WAKE-SICHER) – FIXED v4.1.2
+   MIT THINK-PHASE (WAKE-SICHER) – FIXED v4.2.0
    (SERVER DECIDES LANGUAGE, CLIENT SENDS lang AS FALLBACK)
    + Gesprächsende wird CLIENTSEITIG hart abgeschlossen
+   + NEU: lokale Moduswahl question/dialog vor der ersten eigentlichen Frage
 ----------------------------- */
 
 let recognition = null;
@@ -767,6 +768,12 @@ let heardSomething = false;
 // detectedLanguage hilft der Engine (Recognition.lang),
 // steuert aber NICHT direkt die Antwortsprache.
 let detectedLanguage = "de";
+
+// ✅ NEU: Gesprächsmodus
+// null      = noch nicht gewählt
+// "question"= eine einzelne Frage
+// "dialog"  = längeres Gespräch
+let conversationMode = null;
 
 let _recHandlersBound = false;
 let _recSessionId = 0;
@@ -783,6 +790,64 @@ const SILENCE_GRACE_MS      = 4500;  // erst nach echter Pause "stille erkannt" 
 
 function getSpeechRecognitionCtor() {
   return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+}
+
+/* -----------------------------
+   MODE DETECTION (lokal, ohne Server)
+----------------------------- */
+
+function normalizeModeText(text) {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s-]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function detectConversationModeSelection(text) {
+  const t = normalizeModeText(text);
+  if (!t) return null;
+
+  // Deutsch: Frage-Modus
+  const deQuestion =
+    /\b(eine frage|einzelne frage|nur eine frage|kurze frage|frage stellen|ich habe eine frage)\b/.test(t) ||
+    /\bfrage\b/.test(t);
+
+  // Deutsch: Dialog-Modus
+  const deDialog =
+    /\b(gespräch|gespraech|dialog|unterhalten|länger sprechen|laenger sprechen|weiter reden|länger unterhalten|laenger unterhalten)\b/.test(t);
+
+  // Englisch: Question mode
+  const enQuestion =
+    /\b(one question|single question|just one question|ask a question|question)\b/.test(t);
+
+  // Englisch: Dialog mode
+  const enDialog =
+    /\b(dialog|conversation|talk longer|longer conversation|chat|talk)\b/.test(t);
+
+  // Priorität: präzisere Dialogwörter vor allgemeinem "frage/question"
+  if (deDialog || enDialog) return "dialog";
+  if (deQuestion || enQuestion) return "question";
+
+  return null;
+}
+
+function getModeConfirmationText(mode, lang) {
+  if (mode === "dialog") {
+    return (lang === "en")
+      ? "Very well. Then let us have a longer conversation. Ask your first question."
+      : "Sehr wohl. Dann lasst uns ein längeres Gespräch führen. Stellt nun Eure erste Frage.";
+  }
+
+  return (lang === "en")
+    ? "Very well. Then ask a single question, and I shall answer it."
+    : "Sehr wohl. Dann stellt nun eine einzelne Frage, und ich will sie beantworten.";
+}
+
+function getModeClarificationText(lang) {
+  return (lang === "en")
+    ? "Please say whether you want to ask one question or have a longer conversation."
+    : "Bitte sagt, ob Ihr eine einzelne Frage stellen oder ein längeres Gespräch führen möchtet.";
 }
 
 function ensureRecognition() {
@@ -922,6 +987,56 @@ function ensureRecognition() {
         return;
       }
 
+      // ===== 1b) MODUSWAHL LOKAL =====
+      if (conversationMode === null) {
+        const chosenMode = detectConversationModeSelection(lastTranscript);
+        const modeLang = (detectedLanguage === "en") ? "en" : "de";
+
+        STATE = "answer";
+        resetMovements();
+
+        rising = true;
+        riseStartTime = performance.now();
+
+        if (chosenMode) {
+          conversationMode = chosenMode;
+
+          const confirmText = getModeConfirmationText(chosenMode, modeLang);
+
+          speak(confirmText, false, modeLang, () => {
+            lastTranscript = "";
+            heardSomething = false;
+            listeningFinished = false;
+
+            STATE = "listen";
+
+            setTimeout(() => {
+              if (STATE !== "listen") return;
+              if (talking || recRunning) return;
+              startRecognition();
+            }, 450);
+          });
+        } else {
+          const clarifyText = getModeClarificationText(modeLang);
+
+          speak(clarifyText, false, modeLang, () => {
+            lastTranscript = "";
+            heardSomething = false;
+            listeningFinished = false;
+
+            STATE = "listen";
+
+            setTimeout(() => {
+              if (STATE !== "listen") return;
+              if (talking || recRunning) return;
+              startRecognition();
+            }, 450);
+          });
+        }
+
+        return;
+      }
+
       // ===== 2) ETWAS GEHÖRT → THINK + FETCH =====
       STATE = "think";
       resetMovements();
@@ -971,6 +1086,7 @@ function ensureRecognition() {
         body: JSON.stringify({
           text: lastTranscript,
           lang: detectedLanguage,
+          mode: conversationMode,
           conversationId: (typeof CONV_ID !== "undefined" && CONV_ID) ? CONV_ID : null
         })
       })
@@ -1026,40 +1142,44 @@ function ensureRecognition() {
                   _recSessionId++;
 
                   speak(answerText, false, answerLang, () => {
-                  try {
-                  _recAbortByUs = true;
-                  if (recognition) recognition.abort();
-                   } catch (e) {}
+                    try {
+                      _recAbortByUs = true;
+                      if (recognition) recognition.abort();
+                    } catch (e) {}
 
-                   recRunning = false;
-                   heardSomething = false;
-                   lastTranscript = "";
-                   listeningFinished = false;
-                   _awaitingServer = false;
-                   _noSpeechCount = 0;
+                    recRunning = false;
+                    heardSomething = false;
+                    lastTranscript = "";
+                    listeningFinished = false;
+                    _awaitingServer = false;
+                    _noSpeechCount = 0;
 
-                   try { SESSION_ACTIVE = false; } catch (e) {}
-                   try { CONV_ID = null; } catch (e) {}
+                    try { SESSION_ACTIVE = false; } catch (e) {}
+                    try { CONV_ID = null; } catch (e) {}
 
-                   try { hideHint(); } catch (e) {}
+                    // ✅ Modus für nächsten Besucher zurücksetzen
+                    conversationMode = null;
 
-        // Nicht hart springen – animate() soll ruhig zurückführen
-                   try {
-                   hmNeigen = false;
-                   rising = false;
-                   } catch (e) {}
+                    try { hideHint(); } catch (e) {}
 
-                  // Kurzer Moment Ruhe nach der Abschiedsantwort
-                  setTimeout(() => {
-                  greeted = false;
-                  frontalFix = false;
-                  STATE = "idle";
-                 }, 600);
-               });
+                    // Nicht hart springen – animate() soll ruhig zurückführen
+                    try {
+                      hmNeigen = false;
+                      rising = false;
+                    } catch (e) {}
+
+                    // Kurzer Moment Ruhe nach der Abschiedsantwort
+                    setTimeout(() => {
+                      greeted = false;
+                      frontalFix = false;
+                      STATE = "idle";
+                    }, 600);
+                  });
+
                   return;
                 }
 
-                // ✅ Normaler Dialog: einfach normale Antwort sprechen
+                // ✅ Normaler Dialog / Fragemodus: normale Antwort sprechen
                 speak(answerText, false, answerLang);
               }
             }, 120);
@@ -1187,6 +1307,9 @@ if (typeof window._dialogTimeoutInit === "undefined") {
         SESSION_ACTIVE = false;
         CONV_ID = null;
 
+        // ✅ Modus für nächsten Besucher zurücksetzen
+        conversationMode = null;
+
         // Greeting wieder aktivieren
         greeted = false;
 
@@ -1201,7 +1324,9 @@ if (typeof window._dialogTimeoutInit === "undefined") {
 }
 /* -----------------------------
    BUTTON + ENTER – GREET & LISTEN
-   STABIL – FIXED v3 (FLAG RESYNC → ENTER NIE TOT)
+   STABIL – FIXED v3.1
+   + conversationMode sauber zurücksetzen
+   + Begrüßung mit Moduswahl
 ----------------------------- */
 
 const micBtn = document.getElementById("micBtn");
@@ -1275,7 +1400,10 @@ function startInteraction() {
   =============================== */
   if (STATE === "idle" && !greeted) {
 
-    // === 🔹 DIALOG SESSION START (NEU) ===
+    // ✅ NEU: Moduswahl für neuen Besucher sauber zurücksetzen
+    conversationMode = null;
+
+    // === 🔹 DIALOG SESSION START ===
     if (!SESSION_ACTIVE) {
       SESSION_ACTIVE = true;
       SESSION_LAST_TS = Date.now();
@@ -1310,7 +1438,7 @@ function startInteraction() {
     listeningFinished = false;
 
     speak(
-      "Seid gegrüßt, mein Freund. Ich bin Friedrich Barbarossa, nach fast neunhundert Jahren im Kaiserberg zu Lautern erwacht. Was ist Euer Begehr? Nenn mir auch deinen edlen Namen. If ju wonnt, ju kenn ollso ask in inglisch.",
+      "Seid gegrüßt, mein Freund. Ich bin Friedrich Barbarossa, nach fast neunhundert Jahren im Kaiserberg zu Lautern erwacht. Möchtet Ihr eine einzelne Frage stellen oder ein längeres Gespräch führen? Nennt mir auch Euren edlen Namen. If you want, you can also ask in English.",
       false,
       "de",
       () => { try { showHint("Kurz Knopf drücken, dann fragen"); } catch (e) {} }
@@ -1331,7 +1459,10 @@ function startInteraction() {
 
         try { hideHint(); } catch (e) {}
 
-        // === 🔹 SESSION ENDE (NEU) ===
+        // ✅ NEU: Moduswahl beim Timeout zurücksetzen
+        conversationMode = null;
+
+        // === 🔹 SESSION ENDE ===
         SESSION_ACTIVE = false;
         CONV_ID = null;
 
@@ -1357,7 +1488,7 @@ function startInteraction() {
       return;
     }
 
-    // === 🔹 Session aktiv halten (NEU) ===
+    // === 🔹 Session aktiv halten ===
     if (SESSION_ACTIVE) {
       SESSION_LAST_TS = Date.now();
     }
@@ -1394,23 +1525,6 @@ function startInteraction() {
 
   // LISTEN ignoriert Enter (wie gehabt)
   if (STATE === "listen") return;
-}
-
-/* ===============================
-   HINT-FUNKTIONEN (lokal)
-   (wenn du bereits globale showHint/hideHint hast, diesen Block NICHT doppelt führen)
-================================ */
-
-function hideHint() {
-  try {
-    const hintElement = document.getElementById("hint");
-    if (!hintElement) return;
-
-    hintElement.classList.remove("visible");
-    hintElement.innerText = "";
-  } catch (e) {
-    try { console.warn("hideHint error:", e); } catch {}
-  }
 }
 /* ===============================
    🏛️ MUSEUMS-RESET (PASSIV & SICHER) – FIXED (COMPAT)
