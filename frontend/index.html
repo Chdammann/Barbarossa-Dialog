@@ -756,10 +756,11 @@ function autoListenNextTurn(reason = "") {
 }
 /* -----------------------------
    STATE MACHINE – RECOGNITION
-   MIT THINK-PHASE (WAKE-SICHER) – FIXED v4.2.0
+   MIT THINK-PHASE (WAKE-SICHER) – FIXED v4.2.1
    (SERVER DECIDES LANGUAGE, CLIENT SENDS lang AS FALLBACK)
    + Gesprächsende wird CLIENTSEITIG hart abgeschlossen
-   + NEU: lokale Moduswahl question/dialog vor der ersten eigentlichen Frage
+   + lokale Moduswahl question/dialog vor der ersten eigentlichen Frage
+   + Frage-Modus: nach jeder Antwort zurück in Ausgangsposition / idle
 ----------------------------- */
 
 let recognition = null;
@@ -769,10 +770,10 @@ let heardSomething = false;
 // steuert aber NICHT direkt die Antwortsprache.
 let detectedLanguage = "de";
 
-// ✅ NEU: Gesprächsmodus
-// null      = noch nicht gewählt
-// "question"= eine einzelne Frage
-// "dialog"  = längeres Gespräch
+// ✅ Gesprächsmodus
+// null       = noch nicht gewählt
+// "question" = eine einzelne Frage
+// "dialog"   = längeres Gespräch
 let conversationMode = null;
 
 let _recHandlersBound = false;
@@ -1179,7 +1180,45 @@ function ensureRecognition() {
                   return;
                 }
 
-                // ✅ Normaler Dialog / Fragemodus: normale Antwort sprechen
+                // ✅ Frage-Modus: nach jeder Antwort zurück in Ausgangsposition / idle
+                if (conversationMode === "question") {
+                  speak(answerText, false, answerLang, () => {
+                    try {
+                      _recAbortByUs = true;
+                      if (recognition) recognition.abort();
+                    } catch (e) {}
+
+                    recRunning = false;
+                    heardSomething = false;
+                    lastTranscript = "";
+                    listeningFinished = false;
+                    _awaitingServer = false;
+                    _noSpeechCount = 0;
+
+                    try { SESSION_ACTIVE = false; } catch (e) {}
+                    try { CONV_ID = null; } catch (e) {}
+
+                    // ✅ Modus für nächsten Durchgang zurücksetzen
+                    conversationMode = null;
+
+                    try { hideHint(); } catch (e) {}
+
+                    try {
+                      hmNeigen = false;
+                      rising = false;
+                    } catch (e) {}
+
+                    setTimeout(() => {
+                      greeted = false;
+                      frontalFix = false;
+                      STATE = "idle";
+                    }, 600);
+                  });
+
+                  return;
+                }
+
+                // ✅ Normaler Dialog-Modus: normale Antwort sprechen
                 speak(answerText, false, answerLang);
               }
             }, 120);
